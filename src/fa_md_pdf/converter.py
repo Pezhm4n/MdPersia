@@ -320,7 +320,21 @@ def convert_jobs(
         temp_dir = Path(tmp)
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            def _launch_browser(pw):
+                for kw in (
+                    {"headless": True},
+                    {"headless": True, "channel": "msedge"},
+                    {"headless": True, "channel": "chrome"},
+                ):
+                    try:
+                        return pw.chromium.launch(**kw)
+                    except Exception:
+                        continue
+                raise ConversionError(
+                    "Could not launch browser (Chromium/Edge/Chrome). Please make sure a browser is installed."
+                )
+
+            browser = _launch_browser(playwright)
             page = browser.new_page()
 
             try:

@@ -290,3 +290,94 @@ def test_mdpersia_package_exports():
     assert callable(mdpersia.build_jobs)
     assert mdpersia.ConvertOptions is not None
     assert mdpersia.ConversionError is not None
+
+
+# --- GUI launcher: a second launch must reuse the running dev server --------------
+# Double-clicking .md files repeatedly should not pile up heavy `npm run dev` processes.
+
+class _Response:
+    def __init__(self, status: int):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_dev_server_running_only_answers_true_for_a_live_server(monkeypatch):
+    import urllib.request
+
+    from fa_md_pdf import cli
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=None: _Response(200))
+    assert cli._dev_server_running() is True
+
+    def refused(url, timeout=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(urllib.request, "urlopen", refused)
+    assert cli._dev_server_running() is False
+
+
+def test_gui_reuses_a_running_server_and_never_spawns_npm(tmp_path, monkeypatch):
+    from fa_md_pdf import cli
+
+    (tmp_path / "desktop-tauri").mkdir()
+    doc = tmp_path / "note.md"
+    doc.write_text("# note\n", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "find_project_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(cli, "_dev_server_running", lambda *a, **k: True)
+
+    opened: list[str] = []
+    spawned: list = []
+    monkeypatch.setattr(cli, "_open_gui_window", lambda url: opened.append(url))
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: spawned.append(a))
+
+    assert main(["--gui", str(doc)]) == 0
+    assert spawned == []
+    assert len(opened) == 1 and "?file=" in opened[0] and "note.md" in opened[0]
+
+
+class _Proc:
+    def wait(self):
+        return 0
+
+
+def test_gui_launch_passes_a_python_interpreter_to_the_dev_server(tmp_path, monkeypatch):
+    from fa_md_pdf import cli
+
+    (tmp_path / "desktop-tauri").mkdir()
+    monkeypatch.setattr(cli, "find_project_root", lambda *a, **k: tmp_path)
+    monkeypatch.setattr(cli, "_dev_server_running", lambda *a, **k: False)
+    monkeypatch.setattr(cli, "_open_gui_window", lambda url: None)
+    monkeypatch.setattr("shutil.which", lambda name: "npm.CMD")
+
+    spawned: list = []
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: (spawned.append((a, k)), _Proc())[1])
+
+    # An explicitly chosen interpreter wins: the launching one may lack the conversion deps.
+    monkeypatch.setenv("PYTHON_EXECUTABLE", r"C:\py\good\python.exe")
+    assert main(["--gui"]) == 0
+    assert spawned[0][1]["env"]["PYTHON_EXECUTABLE"] == r"C:\py\good\python.exe"
+
+    monkeypatch.delenv("PYTHON_EXECUTABLE")
+    assert main(["--gui"]) == 0
+    assert spawned[1][1]["env"]["PYTHON_EXECUTABLE"] == cli.sys.executable
+
+
+def test_open_gui_window_falls_back_to_the_default_browser(monkeypatch, tmp_path):
+    import webbrowser
+
+    from fa_md_pdf import cli
+
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path))
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path))
+
+    cli._open_gui_window("http://localhost:1420")
+    assert opened == ["http://localhost:1420"]

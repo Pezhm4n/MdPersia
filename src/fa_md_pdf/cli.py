@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -232,6 +233,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Watch input files or directory for changes and re-convert automatically.",
     )
+    parser.add_argument(
+        "--register-associations",
+        action="store_true",
+        help=(
+            "Register MdPersia as a per-user handler for .md/.markdown files on Windows "
+            "(double-click, 'Open with' and a right-click verb). HKCU only, no elevation. "
+            "Reversible with --unregister-associations."
+        ),
+    )
+    parser.add_argument(
+        "--unregister-associations",
+        action="store_true",
+        help="Remove only the MdPersia association keys created by --register-associations.",
+    )
+    parser.add_argument(
+        "--association-status",
+        action="store_true",
+        help="Report whether MdPersia is registered for Markdown files for the current user.",
+    )
+    parser.add_argument(
+        "--viewer-exe",
+        default=None,
+        help=(
+            "Executable that Windows should launch for an associated file. "
+            "Defaults to the built desktop exe, then to the current Python interpreter."
+        ),
+    )
 
     return parser
 
@@ -428,15 +456,98 @@ def _resolve_wrap_rtl_output(
     return output_for_file(source, input_root, output, target_name=target_name)
 
 
+def _run_associations(args) -> int:
+    """Apply the per-user Markdown file association requests."""
+    from . import associations
+
+    if args.unregister_associations:
+        try:
+            removed = associations.unregister()
+        except OSError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        if removed:
+            print(f"Removed {len(removed)} MdPersia registry keys:")
+            for loc in removed:
+                print(f"  - {loc}")
+        else:
+            print("No MdPersia association keys were present.")
+        return 0
+
+    if args.association_status:
+        ok, command, reason = associations.association_state()
+        if not command:
+            print("MdPersia Markdown association for the current user: not registered")
+            return 0
+        print(f"MdPersia Markdown association command:\n  {command}")
+        if ok:
+            print("Status: working")
+            return 0
+        print(f"Status: broken - {reason}")
+        print("Repair with: mdpersia --register-associations")
+        return 1
+
+    try:
+        exe = associations.resolve_viewer_exe(find_project_root(args.input), args.viewer_exe)
+        written = associations.register(exe)
+    except OSError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Registered MdPersia for {' and '.join(associations.EXTENSIONS)} -> {exe}")
+    print(f"Wrote {len(written)} per-user values (HKCU, no elevation).")
+    print("Undo with: mdpersia --unregister-associations")
+    return 0
+
+
+GUI_DEV_URL = "http://localhost:1420"
+
+
+def _dev_server_running(url: str = GUI_DEV_URL) -> bool:
+    """Whether a `--gui` dev server already answers on the fixed port."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(url, timeout=0.6) as resp:
+            return getattr(resp, "status", 200) == 200
+    except Exception:
+        return False
+
+
+def _open_gui_window(url: str) -> None:
+    """Edge's app mode has no address bar, so the viewer reads as a desktop window."""
+    import subprocess
+    import webbrowser
+
+    if sys.platform == "win32":
+        for root in (os.environ.get("PROGRAMFILES(X86)"), os.environ.get("PROGRAMFILES")):
+            edge = Path(root or "") / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+            if edge.is_file():
+                try:
+                    subprocess.Popen([str(edge), f"--app={url}"])
+                    return
+                except OSError:
+                    continue
+    webbrowser.open(url)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.register_associations or args.unregister_associations or args.association_status:
+        return _run_associations(args)
+
     if args.gui:
         import subprocess
+        import time
 
-        project_root = find_project_root()
+        project_root = find_project_root(args.input if args.input else None)
         tauri_dir = project_root / "desktop-tauri"
+        if not tauri_dir.is_dir():
+            pkg_root = Path(__file__).resolve().parent.parent.parent
+            if (pkg_root / "desktop-tauri").is_dir():
+                project_root = pkg_root
+                tauri_dir = pkg_root / "desktop-tauri"
         release_exe = (
             tauri_dir
             / "src-tauri"
@@ -445,12 +556,57 @@ def main(argv: list[str] | None = None) -> int:
             / "fa-md-pdf-desktop.exe"
         )
         if release_exe.is_file():
-            subprocess.Popen([str(release_exe)])
+            cmd = [str(release_exe)]
+            if args.input:
+                cmd.append(str(Path(args.input).resolve()))
+            subprocess.Popen(cmd)
             return 0
+
         if tauri_dir.is_dir():
+            from urllib.parse import quote
+
+            initial = str(Path(args.input).resolve()) if args.input else None
+            gui_url = f"{GUI_DEV_URL}/?file={quote(initial)}" if initial else GUI_DEV_URL
+
+            if _dev_server_running():
+                # A second launch must not stack another heavy dev server; the running
+                # window takes the file from the URL and hands it to its open tab.
+                print("[fa-md-pdf] Dev server already running; opening the document there.")
+                _open_gui_window(gui_url)
+                return 0
+
             print("[fa-md-pdf] Launching Desktop GUI (Tauri)...")
-            subprocess.Popen(["npm", "run", "dev"], cwd=str(tauri_dir), shell=True)
-            return 0
+            import shutil
+
+            npm = shutil.which("npm")
+            if not npm:
+                print("Error: npm is not on PATH, so the desktop GUI cannot be started.", file=sys.stderr)
+                return 1
+
+            env = os.environ.copy()
+            # The interpreter that launched the CLI may be one without the conversion
+            # dependencies, so an explicitly chosen interpreter has to win.
+            env.setdefault("PYTHON_EXECUTABLE", sys.executable)
+            if initial:
+                env["MDPERSIA_INITIAL_FILE"] = initial
+
+            proc = subprocess.Popen([npm, "run", "dev"], cwd=str(tauri_dir), env=env)
+
+            def _open_when_ready():
+                for _ in range(50):
+                    time.sleep(0.1)
+                    if _dev_server_running(GUI_DEV_URL):
+                        break
+                _open_gui_window(gui_url)
+
+            import threading
+            threading.Thread(target=_open_when_ready, daemon=True).start()
+            try:
+                return proc.wait()
+            except KeyboardInterrupt:
+                proc.terminate()
+                return 0
+
         print("Error: Graphical interface is provided by desktop-tauri.", file=sys.stderr)
         return 1
 

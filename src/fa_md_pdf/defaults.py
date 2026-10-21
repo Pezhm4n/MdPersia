@@ -44,6 +44,7 @@ def find_project_root(input_path: Path | None = None, cwd: Path | None = None) -
         starts.append(input_path)
     if getattr(sys, "frozen", False):
         starts.append(Path(sys.executable).parent)
+    starts.append(Path(__file__).resolve().parent)
 
     seen: set[Path] = set()
     for start in starts:
