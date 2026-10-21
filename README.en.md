@@ -362,7 +362,10 @@ Features:
 - **Theme Support**: Seamless Light & Dark mode switching.
 
 <p align="center">
-  <img src="docs/screenshots/desktop-ui-light.png" width="850" alt="MdPersia Desktop Interface">
+  <img src="docs/screenshots/desktop-ui-dark.png" width="850" alt="MdPersia Desktop Interface - Dark Theme">
+</p>
+<p align="center">
+  <img src="docs/screenshots/desktop-ui-light.png" width="850" alt="MdPersia Desktop Interface - Light Theme">
 </p>
 
 ---

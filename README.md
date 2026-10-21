@@ -409,6 +409,9 @@ mdpersia --unregister-associations   # حذف دقیقاً همان کلیدها
 *پیش‌نمایش کاملاً آفلاین است: قلم وزیرمتن، استایل‌ها و Mermaid از فایل‌های محلی بارگذاری می‌شوند. اگر برنامه از قبل باز باشد، سند جدید در همان پنجره نمایش داده می‌شود و پروسهٔ تازه‌ای اجرا نمی‌شود.*
 
 <p align="center">
+  <img src="docs/screenshots/desktop-ui-dark.png" width="850" alt="رابط کاربری مدپرشیا در تم تاریک">
+</p>
+<p align="center">
   <img src="docs/screenshots/desktop-ui-light.png" width="850" alt="رابط کاربری مدپرشیا در تم روشن">
 </p>
 
