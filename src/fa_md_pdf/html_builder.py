@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .rtl_wrapper import classify_block_direction, detect_direction, has_persian
 
 import html
 import json
@@ -130,6 +131,95 @@ def _highlight_code(code: str, lang: str, attrs: str) -> str:
         return ""
 
 
+def _bidi_plugin(md: MarkdownIt) -> None:
+    """
+    Intelligently tags Markdown blocks with dir="rtl" or dir="ltr" attributes.
+    Preserves RTL layout for bilingual sentences starting with Latin terms,
+    while cleanly tagging pure English sections/headings/lists as LTR.
+    """
+    def rule(state):
+        tokens = state.tokens
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+
+            # 1. Headings
+            if token.type == "heading_open":
+                if i + 1 < len(tokens) and tokens[i + 1].type == "inline":
+                    token.attrSet("dir", classify_block_direction(tokens[i + 1].content))
+
+            # 2. Paragraphs (not nested inside lists to keep list items uniform)
+            elif token.type == "paragraph_open":
+                in_list = False
+                for prev in reversed(tokens[:i]):
+                    if prev.type in ("bullet_list_open", "ordered_list_open"):
+                        in_list = True
+                        break
+                    elif prev.type in ("bullet_list_close", "ordered_list_close"):
+                        break
+                if not in_list and i + 1 < len(tokens) and tokens[i + 1].type == "inline":
+                    token.attrSet("dir", classify_block_direction(tokens[i + 1].content))
+
+            # 3. Lists (ul / ol)
+            elif token.type in ("bullet_list_open", "ordered_list_open"):
+                list_tokens = []
+                j = i + 1
+                depth = 1
+                while j < len(tokens):
+                    if tokens[j].type == token.type:
+                        depth += 1
+                    elif tokens[j].type == token.type.replace("_open", "_close"):
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    list_tokens.append(tokens[j])
+                    j += 1
+                all_text = " ".join(t.content for t in list_tokens if t.type == "inline")
+                token.attrSet("dir", classify_block_direction(all_text))
+
+            # 4. Tables
+            elif token.type == "table_open":
+                table_tokens = []
+                j = i + 1
+                depth = 1
+                while j < len(tokens):
+                    if tokens[j].type == "table_open":
+                        depth += 1
+                    elif tokens[j].type == "table_close":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    table_tokens.append(tokens[j])
+                    j += 1
+                all_text = " ".join(t.content for t in table_tokens if t.type == "inline")
+                token.attrSet("dir", classify_block_direction(all_text))
+
+            # 5. Blockquotes
+            elif token.type == "blockquote_open":
+                bq_tokens = []
+                j = i + 1
+                depth = 1
+                while j < len(tokens):
+                    if tokens[j].type == "blockquote_open":
+                        depth += 1
+                    elif tokens[j].type == "blockquote_close":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    bq_tokens.append(tokens[j])
+                    j += 1
+                all_text = " ".join(t.content for t in bq_tokens if t.type == "inline")
+                token.attrSet("dir", classify_block_direction(all_text))
+
+            # 6. Code blocks / fences (always LTR)
+            elif token.type in ("fence", "code_block"):
+                token.attrSet("dir", "ltr")
+
+            i += 1
+
+    md.core.ruler.push("bidi_plugin", rule)
+
+
 def build_markdown_renderer() -> MarkdownIt:
     renderer = MarkdownIt(
         "default",
@@ -138,6 +228,7 @@ def build_markdown_renderer() -> MarkdownIt:
     # These rules are commonly used in documentation Markdown.
     renderer.enable("table")
     renderer.enable("strikethrough")
+    _bidi_plugin(renderer)
     return renderer
 
 
@@ -300,7 +391,7 @@ CALLOUT_TITLES_PLAIN: Final[dict[str, tuple[str, str]]] = {
 }
 
 CALLOUT_RE: Final[re.Pattern[str]] = re.compile(
-    r"<blockquote>\s*<p>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s*<br\s*/?>|\s*\n)?\s*(.*?)(?=</blockquote>)",
+    r"<blockquote\b[^>]*>\s*<p\b[^>]*>\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\s*<br\s*/?>|\s*\n)?\s*(.*?)(?=</blockquote>)",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -332,6 +423,46 @@ def _transform_pagebreaks(html_str: str) -> str:
     return PAGEBREAK_RE.sub(r'<div class="page-break"></div>', html_str)
 
 
+def fix_bidi_list_items(html_content: str) -> str:
+    """
+    Ensure list items in RTL contexts properly isolate leading Latin keys/codes with colons,
+    and ensure pure Latin list items inside RTL lists render cleanly without colon inversion.
+    """
+    def fix_li(match: re.Match[str]) -> str:
+        li_open = match.group(1)
+        content = match.group(2)
+        li_close = match.group(3)
+
+        if not has_persian(content):
+            # Pure non-Persian list item: wrap in <bdi> to keep LTR integrity inside RTL list
+            return f"{li_open}<bdi>{content}</bdi>{li_close}"
+
+        # Has Persian: check if it opens with a Latin key + colon
+        # Pattern 1: <code>Word</code>:
+        m1 = re.match(r"^(\s*<code>[A-Za-z0-9_.-]+</code>\s*:\s*)(.*)$", content, re.DOTALL)
+        if m1:
+            return f"{li_open}<bdi>{m1.group(1).rstrip()}</bdi> {m1.group(2).lstrip()}{li_close}"
+
+        # Pattern 2: <code>Word:</code>
+        m2 = re.match(r"^(\s*<code>[A-Za-z0-9_.-]+:\s*</code>)(.*)$", content, re.DOTALL)
+        if m2:
+            return f"{li_open}<bdi>{m2.group(1).rstrip()}</bdi> {m2.group(2).lstrip()}{li_close}"
+
+        # Pattern 3: <strong>Word:</strong> or <strong>Word</strong>:
+        m3 = re.match(r"^(\s*<strong>[A-Za-z0-9_.-]+(?::</strong>|</strong>\s*:)\s*)(.*)$", content, re.DOTALL)
+        if m3:
+            return f"{li_open}<bdi>{m3.group(1).rstrip()}</bdi> {m3.group(2).lstrip()}{li_close}"
+
+        # Pattern 4: Plain Latin Word:
+        m4 = re.match(r"^(\s*[A-Za-z0-9_.-]+\s*:\s*)(.*)$", content, re.DOTALL)
+        if m4:
+            return f"{li_open}<bdi>{m4.group(1).rstrip()}</bdi> {m4.group(2).lstrip()}{li_close}"
+
+        return match.group(0)
+
+    return re.sub(r"(<li\b[^>]*>)(.*?)(</li>)", fix_li, html_content, flags=re.DOTALL | re.IGNORECASE)
+
+
 def build_html(markdown_text: str, options: HtmlBuildOptions) -> HtmlDocument:
     if options.strip_emojis:
         markdown_text = strip_emojis(markdown_text)
@@ -343,13 +474,17 @@ def build_html(markdown_text: str, options: HtmlBuildOptions) -> HtmlDocument:
     body_html = renderer.render(markdown_with_mermaid)
     body_html = _transform_callouts(body_html, strip_emojis_flag=options.strip_emojis)
     body_html = _transform_pagebreaks(body_html)
+    body_html = fix_bidi_list_items(body_html)
 
     css = build_css(options)
     base_uri = directory_uri(options.source_path.parent)
     mermaid_script = build_mermaid_script(options, has_mermaid)
 
+    doc_dir = detect_direction(markdown_text)
+    doc_lang = "fa" if doc_dir == "rtl" else "en"
+
     document = f"""<!doctype html>
-<html lang="fa" dir="rtl">
+<html lang="{doc_lang}" dir="{doc_dir}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">

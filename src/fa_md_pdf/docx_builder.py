@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .rtl_wrapper import has_persian
 
 import re
 from dataclasses import dataclass, replace
@@ -636,11 +637,11 @@ def _render_inline_tokens(
 
         if kind == "html_inline":
             content_lower = token.content.lower()
-            if 'dir="ltr"' in content_lower or "dir='ltr'" in content_lower:
+            if 'dir="ltr"' in content_lower or "dir='ltr'" in content_lower or "<bdi" in content_lower:
                 ltr_stack.append(True)
             elif 'dir="rtl"' in content_lower or "dir='rtl'" in content_lower:
                 ltr_stack.append(False)
-            elif "</span" in content_lower and len(ltr_stack) > 1:
+            elif ("</span" in content_lower or "</bdi" in content_lower) and len(ltr_stack) > 1:
                 ltr_stack.pop()
             elif "<img" in content_lower:
                 _handle_html_inline_image(paragraph, token.content, options)
@@ -650,7 +651,7 @@ def _render_inline_tokens(
             text = token.content
             if not text:
                 continue
-            is_rtl = options.rtl and (not ltr_stack[-1])
+            is_rtl = options.rtl and (not ltr_stack[-1]) and has_persian(text)
             link_href = getattr(paragraph, "_link_href", None)
             if link_href:
                 _add_hyperlink_run(
@@ -768,9 +769,12 @@ def _add_heading(
     options: DocxBuildOptions,
 ) -> None:
     paragraph = document.add_paragraph()
-    if options.rtl:
+    has_fa = has_persian(inline_token.content or "") if options.rtl else False
+    if has_fa:
         _set_paragraph_rtl(paragraph)
-        # Don't set jc=right; bidi handles RTL alignment in Word
+    else:
+        _set_paragraph_ltr(paragraph)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     size = HEADING_SIZES.get(level, 12)
     paragraph.paragraph_format.space_before = Pt(12)
@@ -804,10 +808,14 @@ def _add_paragraph_block(
         t.type == "image" or (t.type == "html_inline" and "<img" in t.content.lower())
         for t in children
     )
+    has_fa = has_persian(inline_token.content or "") if options.rtl else False
     if has_image:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    elif options.rtl:
+    elif has_fa:
         _set_paragraph_rtl(paragraph)
+    else:
+        _set_paragraph_ltr(paragraph)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     _render_inline_tokens(
         paragraph,
@@ -1023,14 +1031,14 @@ def _add_list_item(
     level: int,
 ) -> None:
     paragraph = document.add_paragraph()
-    if options.rtl:
+    is_item_rtl = options.rtl
+    if is_item_rtl:
         _set_paragraph_rtl(paragraph)
-
-    indent = Inches(0.25 * (level + 1))
-    if options.rtl:
-        paragraph.paragraph_format.right_indent = indent
+        paragraph.paragraph_format.right_indent = Inches(0.25 * (level + 1))
     else:
-        paragraph.paragraph_format.left_indent = indent
+        _set_paragraph_ltr(paragraph)
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        paragraph.paragraph_format.left_indent = Inches(0.25 * (level + 1))
 
     bullet = f"{index}. " if ordered else "• "
     _add_styled_run(
@@ -1039,7 +1047,7 @@ def _add_list_item(
         font_name=options.font_family,
         font_size_pt=options.font_size_pt,
         bold=True,
-        rtl=options.rtl,
+        rtl=is_item_rtl,
     )
 
     _render_inline_tokens(

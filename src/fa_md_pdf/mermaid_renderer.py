@@ -87,7 +87,21 @@ def render_mermaid_to_png(
     result: dict[str, Path] = {}
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        def _launch_browser(pw):
+            for kw in (
+                {"headless": True},
+                {"headless": True, "channel": "msedge"},
+                {"headless": True, "channel": "chrome"},
+            ):
+                try:
+                    return pw.chromium.launch(**kw)
+                except Exception:
+                    continue
+            raise RuntimeError(
+                "Could not launch browser (Chromium/Edge/Chrome). Please make sure a browser is installed."
+            )
+
+        browser = _launch_browser(playwright)
         try:
             for idx, code in enumerate(mermaid_codes):
                 if code in result:
