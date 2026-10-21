@@ -13,13 +13,21 @@ fa-md-pdf INPUT [OPTIONS]
 برای اجرای رابط گرافیکی:
 
 ```powershell
-fa-md-pdf-gui
+mdpersia --gui
 ```
 
-یا:
+با دادن مسیر یک سند، همان فایل مستقیماً در تب پیش‌نمایش باز می‌شود:
 
 ```powershell
-fa-md-pdf --gui
+mdpersia --gui .\README.md
+```
+
+برای افزودن «باز کردن با MdPersia» به منوی راست‌کلیک ویندوز (فقط HKCU، بدون ادمین):
+
+```powershell
+mdpersia --register-associations
+mdpersia --association-status
+mdpersia --unregister-associations
 ```
 
 ## حالت فایل تکی
@@ -94,7 +102,10 @@ fa-md-pdf .\docs --wrap-rtl
 |---|---|
 | `-o, --output` | فایل خروجی برای ورودی تکی یا فولدر خروجی برای ورودی فولدر |
 | `-f, --format` | `pdf` یا `docx`. پیش‌فرض: `pdf` |
-| `--gui` | باز کردن رابط گرافیکی به‌جای تبدیل |
+| `--gui` | باز کردن رابط گرافیکی به‌جای تبدیل؛ با دادن مسیر سند، همان فایل در تب پیش‌نمایش باز می‌شود |
+| `--register-associations` | افزودن «باز کردن با MdPersia» برای `.md` و `.markdown` در رجیستری کاربر (HKCU) |
+| `--unregister-associations` | حذف فقط کلیدهایی که `--register-associations` ساخته است |
+| `--association-status` | نمایش دستور ثبت‌شده و سالم بودن آن برای دابل‌کلیک |
 | `--recursive` | تبدیل فایل‌های زیرپوشه‌ها؛ پیش‌فرض فعال است |
 | `--no-recursive` | فقط فایل‌های مستقیم فولدر |
 | `--extensions` | پسوندهای مجاز، پیش‌فرض `.md .markdown` |

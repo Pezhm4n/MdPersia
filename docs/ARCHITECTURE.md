@@ -37,25 +37,29 @@ flowchart LR
 
 ## جریان GUI
 
+رابط گرافیکی، اپلیکیشن دسکتاپ Tauri در `desktop-tauri/` است (نه tkinter). هستهٔ Python هیچ رابطی نمی‌سازد؛ فقط یا فایل اجرایی ساخته‌شده را صدا می‌زند یا سرور توسعه را بالا می‌آورد.
+
 ```mermaid
 flowchart TD
-    A[fa-md-pdf-gui or fa-md-pdf --gui] --> B[MainWindow tkinter]
-    B --> C[Auto-detect browsers/, vendor/, fonts/]
-    C --> D[User configures via tabs]
-    D --> E[Click تبدیل]
-    E --> F[ConversionThread - background]
-    F --> G[convert_jobs with on_progress callback]
-    G --> H[queue.Queue ProgressEvent]
-    H --> I[root.after 100ms poll]
-    I --> J[Update progress log]
+    A["mdpersia --gui file.md"] --> B{"fa-md-pdf-desktop.exe ساخته شده؟"}
+    B --> |بله| C["اجرای فایل اجرایی با مسیر سند"]
+    B --> |خیر| D["npm run dev در desktop-tauri"]
+    D --> E["پنجره Edge app روی پورت 1420"]
+    C --> F["startup_arguments یا ?file="]
+    E --> F
+    F --> G["بارگذاری سند و فعال کردن تب پیش‌نمایش"]
+    G --> H["رندر آفلاین از fonts/ و vendor/ محلی"]
+    C --> I["single-instance: سند جدید در همان پنجره"]
 ```
+
+در حالت توسعه، پلی Python در `vite.config.ts` درخواست‌های رابط (پیش‌نمایش، پیمایش پوشه، دیالوگ‌های ویندوز، تبدیل) به `fa_md_pdf` وصل می‌کند.
 
 ## اجزای اصلی
 
 | فایل | مسئولیت |
 |---|---|
-| `cli.py` | پارس کردن آرگومان‌های خط فرمان، dispatch به PDF/DOCX/wrap-rtl/GUI |
-| `gui.py` | رابط گرافیکی tkinter (پنجره اصلی، تب‌ها، Thread پس‌زمینه) |
+| `cli.py` | پارس کردن آرگومان‌های خط فرمان، dispatch به PDF/DOCX/wrap-rtl/GUI و سوئیچ‌های ثبت پسوند |
+| `associations.py` | ثبت/لغو/اعتبارسنجی «باز کردن با MdPersia» در رجیستری کاربر (HKCU) |
 | `converter.py` | کشف فایل‌ها، ساخت jobها، اجرای Playwright (PDF) یا python-docx (DOCX) |
 | `html_builder.py` | تبدیل Markdown به HTML راست‌به‌چپ و تزریق CSS/Mermaid |
 | `docx_builder.py` | تولید سند Word با تنظیمات کامل RTL و embed تصاویر |
@@ -63,16 +67,15 @@ flowchart TD
 | `rtl_wrapper.py` | بسته‌بندی بلوک‌های Persian با `<div dir="rtl">` در Markdown |
 | `defaults.py` | تشخیص project root و دارایی‌های آفلاین (`browsers/`, `vendor/`, `fonts/`) |
 | `assets/default.css` | استایل پایه برای فارسی، RTL، جدول‌ها، code blockها و چاپ |
+| `desktop-tauri/` | رابط دسکتاپ: React + Tauri، صف، اینسپکتور، پیش‌نمایش و کنسول |
 
 ## نقطه‌های ورود
 
 | ورودی | مقصد |
 |---|---|
-| `fa-md-pdf` | `cli.main()` |
-| `fa-md-pdf --gui` | `cli.main()` → `gui.launch_gui()` |
-| `fa-md-pdf-gui` | `gui.main()` |
+| `mdpersia` / `fa-md-pdf` | `cli.main()` |
+| `mdpersia --gui` | `cli.main()` → اپلیکیشن دسکتاپ `desktop-tauri` |
 | `fa-md-pdf.exe` | `entry_point.py` → `cli.main()` (PyInstaller) |
-| `fa-md-pdf-gui.exe` | `entry_point_gui.py` → `gui.main()` (PyInstaller) |
 
 ## تصمیم‌های طراحی
 
@@ -92,21 +95,18 @@ Playwright کنترل مستقیم Chromium را فراهم می‌کند و م�
 
 `python-docx` کتابخانه‌ای خالص پایتون است (بدون نیاز به Word یا COM)، و امکان دسترسی مستقیم به XML سند Word برای تنظیم بیت‌های RTL (`w:bidi`، `w:rtl`، `w:bCs`، `w:szCs`) را فراهم می‌کند که برای رندر صحیح متن فارسی ضروری است.
 
-### چرا tkinter برای GUI؟
+### معماری GUI (Tauri + پل Vite)
 
-- بخشی از کتابخانه استاندارد پایتون است (بدون وابستگی اضافه)
-- روی ویندوز با ظاهر بومی کار می‌کند
-- از RTL با `justify="right"` و چیدمان از راست به چپ پشتیبانی می‌کند
-- اندازه exe نهایی را به حداقل می‌رساند
+رابط گرافیکی از دو مسیر مستقل و هماهنگ پشتیبانی می‌کند:
+1. **حالت توسعه (Dev Mode):** هسته‌ی پایتون سرور توسعه Vite را بر روی پورت `1420` اجرا می‌کند. عملیات بومی سیستم (مانند دیالوگ‌های انتخاب فایل و پوشه، پیمایش مسیرها، پیش‌نمایش HTML زنده و اجرای تبدیل) از طریق Middleware اختصاصی Vite در `desktop-tauri/vite.config.ts` انجام می‌شود.
+2. **حالت بسته‌بندی‌شده (Packaged App):** با استفاده از Tauri v2، دستورات Native به لایه‌ی Rust (`lib.rs`) و پلاگین‌های سیستمی (`fs`، `dialog`، `shell`، `single-instance`) واگذار می‌شوند.
+3. لایه‌ی انتزاعی `tauriBridge.ts` در فرانت‌اند React، تفاوت بین این دو محیط را کاملاً مخفی کرده و واسط یکپارچه‌ای برای برنامه فراهم می‌کند.
 
-### مدل thread برای GUI
+### مدیریت تک‌نمونه (Single Instance)
 
-GUI از یک thread پس‌زمینه برای اجرای تبدیل استفاده می‌کند تا UI پاسخگو بماند:
-
-- `threading.Thread` برای اجرای `convert_jobs`
-- `queue.Queue` برای ارسال `ProgressEvent` از worker به UI
-- `tkinter.after(100ms)` برای polling thread-safe
-- `threading.Event` برای پشتیبانی از انصراف بین jobها
+برای جلوگیری از باز شدن چند پنجره یا اشغال مجدد پورت ۱۴۲۰ در هر بار دابل‌کلیک روی یک سند `.md`، سیستم تک‌نمونه با دو لایه محافظت عمل می‌کند:
+- بررسی پورت ۱۴۲۰ در لانچر پایتون و هدایت سند جدید به همان سرور
+- استفاده از `BroadcastChannel` در مرورگر (`singleInstance.ts`) و پلاگین `single-instance` در محیط Tauri برای تحویل آنی سند به تب Preview پنجره‌ی موجود.
 
 ### پشتیبانی از اجرای frozen (PyInstaller)
 
