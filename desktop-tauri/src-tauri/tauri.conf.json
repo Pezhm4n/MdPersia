@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "fa-md-pdf",
+  "productName": "MdPersia",
   "version": "1.0.0",
   "identifier": "com.famddf.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "fa-md-pdf | تبدیل تخصصی مارک‌داون فارسی به PDF و DOCX",
+        "title": "MdPersia | تبدیل تخصصی مارک‌داون فارسی به PDF و Word",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -23,11 +23,23 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**/*"]
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown"],
+        "name": "Markdown Document",
+        "description": "MdPersia RTL Markdown viewer and converter",
+        "role": "Viewer"
+      }
+    ]
   }
 }

@@ -1,17 +1,39 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default permissions for fa-md-pdf desktop app",
+  "description": "Default permissions for MdPersia desktop app",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:default",
-    "shell:allow-execute",
-    "shell:allow-spawn",
+    "core:webview:default",
     "dialog:default",
     "dialog:allow-open",
-    "dialog:allow-save",
     "fs:default",
-    "fs:allow-read-text-file"
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "**/*" }]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [{ "path": "**/*" }]
+    },
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "fa-md-pdf",
+          "cmd": "python",
+          "args": "*",
+          "description": "Run the MdPersia conversion engine"
+        },
+        {
+          "name": "explorer",
+          "cmd": "explorer.exe",
+          "args": "*",
+          "description": "Reveal generated documents in Windows Explorer"
+        }
+      ]
+    }
   ]
 }
