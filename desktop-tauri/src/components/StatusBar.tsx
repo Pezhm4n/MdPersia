@@ -45,7 +45,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       </div>
 
       {/* Right / Offline Readiness Badges */}
-      <div className="hidden md:flex items-center gap-4 text-dim">
+      <div className="hidden md:flex items-center gap-4 text-muted">
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           <span>مرورگر کرومیوم آماده</span>
@@ -56,7 +56,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          <span>رندرر آفلاین Mermaid</span>
+          <span>رندر آفلاین Mermaid</span>
         </div>
       </div>
     </footer>
