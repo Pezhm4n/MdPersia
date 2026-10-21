@@ -1,5 +1,5 @@
 from pathlib import Path
-from fa_md_pdf.rtl_wrapper import detect_direction, is_rtl_document, has_persian
+from fa_md_pdf.rtl_wrapper import detect_direction, is_rtl_document
 from fa_md_pdf.html_builder import build_html, HtmlBuildOptions
 from fa_md_pdf.docx_builder import build_docx, DocxBuildOptions
 from docx import Document

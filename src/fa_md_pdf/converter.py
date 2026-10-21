@@ -113,7 +113,6 @@ def build_jobs(
 
     input_path = input_path.resolve()
     output = output.resolve() if output else None
-    target_suffix = f".{output_format}"
     target_suffixes = {".pdf", ".docx"}
 
     if input_path.is_file():

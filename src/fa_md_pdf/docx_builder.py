@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -17,11 +17,8 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from .html_builder import (
-    DEFAULT_MERMAID_CDN,
     EMOJI_PATTERN,
-    convert_mermaid_fences_to_html,
     extract_title,
-    read_text_safely,
     strip_emojis,
     strip_front_matter,
 )
@@ -1090,7 +1087,6 @@ def _add_mermaid_image(
         with open(image_path, "rb") as f:
             header = f.read(24)
         img_width = struct.unpack(">I", header[16:20])[0]
-        img_height = struct.unpack(">I", header[20:24])[0]
 
         # PNGs are rendered at options.image_scale * 96 DPI.
         # Compute natural CSS width and clamp between min and max.
@@ -1153,7 +1149,6 @@ def _add_table_from_tokens(
     Returns index of token after table_close.
     """
     rows: list[list[list[Token]]] = []  # rows -> cells -> inline children
-    is_header_row = False
     current_row: list[list[Token]] = []
 
     i = start_index + 1  # skip table_open
@@ -1162,10 +1157,8 @@ def _add_table_from_tokens(
         if token.type == "table_close":
             i += 1
             break
-        elif token.type == "thead_open":
-            is_header_row = True
-        elif token.type == "thead_close":
-            is_header_row = False
+        elif token.type in ("thead_open", "thead_close"):
+            pass
         elif token.type == "tr_open":
             current_row = []
         elif token.type == "tr_close":

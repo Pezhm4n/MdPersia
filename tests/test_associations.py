@@ -1,7 +1,5 @@
 """Windows file-association helpers are pure up to winreg; only the plan is tested here."""
 
-import subprocess
-import sys
 
 import pytest
 
@@ -61,7 +59,7 @@ def test_build_entries_exposes_open_with_and_context_verb():
     assert by_key[(rf"{associations.PROGID_KEY}\Capabilities\FileAssociations", ".markdown")] == (
         associations.PROG_ID
     )
-    verb = rf"Software\Classes\SystemFileAssociations\.md\shell\MdPersia.view"
+    verb = r"Software\Classes\SystemFileAssociations\.md\shell\MdPersia.view"
     assert by_key[(verb, "")] == associations.VERB_LABEL
     assert by_key[(rf"{verb}\command", "")].endswith('"%1"')
 
