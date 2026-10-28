@@ -1,7 +1,7 @@
 import React from 'react';
 import { QueueItem } from '../types';
 import { ColumnKey } from './Queue/queueTypes';
-import { FileText, CheckCircle2, AlertCircle, Loader2, Clock } from 'lucide-react';
+import { FileText, CheckCircle2, AlertCircle, Loader2, Clock, Eye } from 'lucide-react';
 
 interface QueueItemRowProps {
   item: QueueItem;
@@ -18,6 +18,10 @@ const BADGE = 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[1
 
 function StatusBadge({ status, error }: { status: QueueItem['status']; error?: string }) {
   switch (status) {
+    case 'watching':
+      return <span className={`${BADGE} bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30`}>
+        <Eye className="w-3 h-3 shrink-0" /><span>پایش زنده</span>
+      </span>;
     case 'running':
       return (
         <span className={`${BADGE} bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-500/30`}>

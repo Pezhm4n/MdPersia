@@ -1,6 +1,7 @@
 import { QueueItem, ConvertOptions, LogEntry, ProgressEvent } from '../types';
 import { buildCliArgs } from './cliTranslator';
 import { DEFAULT_APP_SETTINGS, type ReadingSettings } from './appSettings';
+import { createWatchObserver, stderrLogLevel } from './consoleReport';
 
 export const isTauri = (): boolean => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -23,7 +24,8 @@ const log = (
  */
 async function executeWebConversionJob(
   args: string[],
-  onLog: (entry: LogEntry) => void
+  onLog: (entry: LogEntry) => void,
+  observeStdout: (text: string) => void
 ): Promise<number> {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const response = await fetch('/api/convert-job', {
@@ -61,6 +63,7 @@ async function executeWebConversionJob(
       try {
         const payload = JSON.parse(match[1]);
         if (payload.type === 'stdout') {
+          observeStdout(payload.text);
           onLog({
             id: `stdout-${Date.now()}-${Math.random()}`,
             timestamp: getTimestamp(),
@@ -71,7 +74,7 @@ async function executeWebConversionJob(
           onLog({
             id: `stderr-${Date.now()}-${Math.random()}`,
             timestamp: getTimestamp(),
-            level: 'warn',
+            level: stderrLogLevel(payload.text),
             message: payload.text.trimEnd(),
           });
         } else if (payload.type === 'exit') {
@@ -102,33 +105,43 @@ export async function executeConversion(
   items: QueueItem[],
   options: ConvertOptions,
   onProgress: (evt: ProgressEvent) => void,
-  onLog: (entry: LogEntry) => void
+  publishLog: (entry: LogEntry) => void
 ): Promise<void> {
   activeCancellation = false;
   let successCount = 0;
   let failCount = 0;
+  const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  let logSequence = 0;
+  let currentItem: QueueItem | null = null;
+  const onLog = (entry: LogEntry) => publishLog({ ...entry, id: `${batchId}-${logSequence++}`, batchId,
+    ...(currentItem ? { fileName: currentItem.name, filePath: currentItem.path } : {}) });
+  const cancelled = () => {
+    currentItem = null;
+    onProgress({ type: 'cancelled' });
+    log(onLog, 'warn', options.watch ? 'پایش زنده توسط کاربر متوقف شد.' : 'تبدیل توسط کاربر متوقف شد.');
+  };
 
   onLog({
     id: `log-${Date.now()}-start`,
     timestamp: getTimestamp(),
     level: 'info',
-    message: `[START] Starting batch conversion of ${items.length} file(s) (${options.format.toUpperCase()})...`,
+    kind: 'batch-start',
+    message: `تبدیل ${items.length} سند به ${options.format === 'wrap-rtl' ? 'Markdown راست‌چین' : options.format.toUpperCase()} آغاز شد.`,
   });
 
   for (let i = 0; i < items.length; i++) {
     if (activeCancellation) {
-      onProgress({ type: 'cancelled' });
-      onLog({
-        id: `log-${Date.now()}-cancelled`,
-        timestamp: getTimestamp(),
-        level: 'warn',
-        message: 'Conversion batch cancelled by user.',
-      });
+      cancelled();
       return;
     }
 
     const item = items[i];
+    currentItem = item;
     const args = buildCliArgs(item, options);
+    const observeStdout = options.watch ? createWatchObserver(watching => onProgress({
+      type: watching ? 'watching' : 'progress', itemId: item.id, file: item.name,
+      total: items.length, completed: i,
+    })) : () => {};
 
     onProgress({
       type: 'progress',
@@ -142,6 +155,7 @@ export async function executeConversion(
       id: `log-${Date.now()}-cmd`,
       timestamp: getTimestamp(),
       level: 'info',
+      kind: 'command',
       message: `fa-md-pdf ${args.join(' ')}`,
     });
 
@@ -152,6 +166,7 @@ export async function executeConversion(
         const cmd = Command.create('fa-md-pdf', args);
 
         cmd.stdout.on('data', (line: string) => {
+          observeStdout(line + '\n');
           onLog({
             id: `stdout-${Date.now()}-${Math.random()}`,
             timestamp: getTimestamp(),
@@ -164,7 +179,7 @@ export async function executeConversion(
           onLog({
             id: `stderr-${Date.now()}-${Math.random()}`,
             timestamp: getTimestamp(),
-            level: 'warn',
+            level: stderrLogLevel(line),
             message: line,
           });
         });
@@ -172,11 +187,11 @@ export async function executeConversion(
         const output = await cmd.execute();
         code = output.code ?? 1;
       } else {
-        code = await executeWebConversionJob(args, onLog);
+        code = await executeWebConversionJob(args, onLog, observeStdout);
       }
 
       cancelCurrentJob = null;
-      if (activeCancellation) { onProgress({ type: 'cancelled' }); return; }
+      if (activeCancellation) { cancelled(); return; }
       if (code === 0) {
         successCount++;
         onProgress({
@@ -189,7 +204,7 @@ export async function executeConversion(
           id: `log-${Date.now()}-ok`,
           timestamp: getTimestamp(),
           level: 'success',
-          message: `✓ Converted successfully: ${item.name}`,
+          message: 'تبدیل سند با موفقیت انجام شد.',
         });
       } else {
         failCount++;
@@ -203,7 +218,7 @@ export async function executeConversion(
           id: `log-${Date.now()}-err`,
           timestamp: getTimestamp(),
           level: 'error',
-          message: `✗ Failed converting ${item.name} (exit code ${code})`,
+          message: `تبدیل سند با کد خروج ${code} متوقف شد. جزئیات موتور را در رویدادهای بالا ببینید.`,
         });
       }
     } catch (err: any) {
@@ -219,12 +234,13 @@ export async function executeConversion(
         id: `log-${Date.now()}-fatal`,
         timestamp: getTimestamp(),
         level: 'error',
-        message: `Fatal error on ${item.name}: ${err.message}`,
+        message: `تبدیل سند انجام نشد: ${err.message || String(err)}`,
       });
     }
   }
 
-  if (activeCancellation) { onProgress({ type: 'cancelled' }); return; }
+  if (activeCancellation) { cancelled(); return; }
+  currentItem = null;
   onProgress({
     type: 'done',
     total: items.length,
@@ -235,7 +251,8 @@ export async function executeConversion(
     id: `log-${Date.now()}-summary`,
     timestamp: getTimestamp(),
     level: 'summary',
-    message: `Batch finished: ${successCount} succeeded, ${failCount} failed.`,
+    kind: 'batch-end',
+    message: `گزارش تبدیل: ${successCount} سند موفق، ${failCount} سند ناموفق.`,
   });
 }
 

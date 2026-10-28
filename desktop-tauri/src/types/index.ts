@@ -1,5 +1,5 @@
 export type OutputFormat = 'pdf' | 'docx' | 'wrap-rtl';
-export type ItemStatus = 'pending' | 'running' | 'success' | 'error';
+export type ItemStatus = 'pending' | 'running' | 'watching' | 'success' | 'error';
 export type MermaidTheme = 'default' | 'forest' | 'dark' | 'neutral' | 'base' | 'null';
 export type PageFormat = 'A4' | 'A3' | 'Letter' | 'Legal';
 export type MarginOption = '10mm' | '15mm' | '20mm' | '25mm' | '30mm';
@@ -56,7 +56,7 @@ export interface ConvertOptions {
 }
 
 export interface ProgressEvent {
-  type: 'start' | 'progress' | 'success' | 'error' | 'done' | 'cancelled';
+  type: 'start' | 'progress' | 'watching' | 'success' | 'error' | 'done' | 'cancelled';
   file?: string;
   itemId?: string;
   total?: number;
@@ -70,4 +70,8 @@ export interface LogEntry {
   timestamp: string;
   level: 'info' | 'success' | 'warn' | 'error' | 'summary';
   message: string;
+  kind?: 'batch-start' | 'batch-end' | 'command';
+  batchId?: string;
+  fileName?: string;
+  filePath?: string;
 }

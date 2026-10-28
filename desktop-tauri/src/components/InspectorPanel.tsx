@@ -23,6 +23,7 @@ import { Tooltip } from './Tooltip';
 interface InspectorPanelProps {
   options: ConvertOptions;
   isRunning: boolean;
+  isWatching: boolean;
   hasDocuments?: boolean;
   /** Waiting on the native folder dialog for the output directory. */
   outputDirBusy?: boolean;
@@ -48,6 +49,7 @@ const TABS: { id: TabKey; label: string; icon: React.ComponentType<{ className?:
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   options,
   isRunning,
+  isWatching,
   hasDocuments = true,
   outputDirBusy = false,
   onOptionsChange,
@@ -200,12 +202,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
           <input
             type="checkbox"
             checked={options.watch}
+            aria-describedby={options.watch ? 'watch-mode-hint' : undefined}
             onChange={(e) => onOptionsChange('watch', e.target.checked)}
             className="rounded border-input bg-input text-blue-600 shrink-0"
           />
           <Eye className="w-3.5 h-3.5 text-blue-500 shrink-0" />
           <span className="whitespace-nowrap">حالت پایش زنده (Watch Mode)</span>
         </label>
+        {options.watch && <p id="watch-mode-hint" className="text-[11px] text-muted px-1 leading-5">پس از تبدیل، منتظر تغییر فایل می‌ماند؛ برای پایان، توقف را بزنید.</p>}
 
         <div className="flex gap-2">
           <button
@@ -214,7 +218,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
             className="btn flex-1 py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-lg shadow-blue-600/20"
             title="اجرای تبدیل روی همهٔ اسناد صف"
           >
-            {isRunning ? (
+            {isWatching ? <><Eye className="w-4 h-4" /><span>پایش زنده فعال</span></> : isRunning ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span>درحال تبدیل…</span>

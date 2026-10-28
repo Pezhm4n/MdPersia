@@ -12,6 +12,8 @@ interface WorkspacePanelProps {
   markdownContent?: string;
   logs: LogEntry[];
   isRunning: boolean;
+  isWatching: boolean;
+  onStopConversion: () => Promise<void>;
   theme?: 'dark' | 'light';
   activeTab: 'preview' | 'terminal';
   onTabChange: (tab: 'preview' | 'terminal') => void;
@@ -33,6 +35,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
   markdownContent,
   logs,
   isRunning,
+  isWatching, onStopConversion,
   theme = 'dark',
   activeTab,
   onTabChange,
@@ -94,9 +97,9 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'terminal' && (
-          <TerminalTab logs={logs} onClearLogs={onClearLogs} onOpenOutputDir={onOpenOutputDir} />
-        )}
+        <div className={activeTab === 'terminal' ? 'h-full' : 'hidden'}>
+          <TerminalTab logs={logs} isRunning={isRunning} isWatching={isWatching} isActive={activeTab === 'terminal'} onStop={onStopConversion} onClearLogs={onClearLogs} onOpenOutputDir={onOpenOutputDir} />
+        </div>
         <div className={activeTab === 'preview' ? 'h-full' : 'hidden'}>
           <PreviewTab
             selectedItem={selectedItem}

@@ -115,6 +115,7 @@ export const App: React.FC = () => {
     },
   ]);
   const [isRunning, setIsRunning] = useState(false);
+  const [isWatching, setIsWatching] = useState(false);
   const [progressPercent, setProgressPercent] = useState(0);
   const [completedCount, setCompletedCount] = useState(0);
   const [statusMessage, setStatusMessage] = useState('آماده به کار');
@@ -585,6 +586,7 @@ export const App: React.FC = () => {
       guardEdits(items.map(item => item.path), () => { void handleConvert(); }, false); return;
     }
     setIsRunning(true);
+    setIsWatching(false);
     setProgressPercent(0);
     setCompletedCount(0);
     setStatusMessage(`درحال تبدیل ${items.length} سند با موتور MdPersia...`);
@@ -596,6 +598,8 @@ export const App: React.FC = () => {
       options,
       (evt: ProgressEvent) => {
         if (evt.type === 'progress') {
+          setIsWatching(false);
+          setStatusMessage(`در حال تبدیل ${evt.file ?? 'سند'}…`);
           const comp = evt.completed || 0;
           const tot = evt.total || items.length;
           setCompletedCount(comp);
@@ -605,6 +609,10 @@ export const App: React.FC = () => {
               prev.map((it) => (it.id === evt.itemId ? { ...it, status: 'running' } : it))
             );
           }
+        } else if (evt.type === 'watching') {
+          setIsWatching(true);
+          setStatusMessage(`پایش زنده: در انتظار تغییر ${evt.file ?? 'فایل'}؛ برای پایان، توقف تبدیل را بزنید.`);
+          updateQueue(prev => prev.map(item => item.id === evt.itemId ? { ...item, status: 'watching' } : item));
         } else if (evt.type === 'success') {
           if (evt.file) {
             updateQueue((prev) =>
@@ -626,7 +634,7 @@ export const App: React.FC = () => {
           const tot = evt.total ?? items.length;
           setStatusMessage(`فرآیند تبدیل پایان یافت: ${succ} موفق، ${tot - succ} ناموفق.`);
         } else if (evt.type === 'cancelled') {
-          updateQueue(prev => prev.map(item => item.status === 'running' ? { ...item, status: 'pending' } : item));
+          updateQueue(prev => prev.map(item => item.status === 'running' || item.status === 'watching' ? { ...item, status: 'pending' } : item));
           setStatusMessage('عملیات تبدیل توسط کاربر لغو گردید.');
         }
       },
@@ -634,6 +642,7 @@ export const App: React.FC = () => {
     );
 
     setIsRunning(false);
+    setIsWatching(false);
   };
 
   const handleCancel = async () => {
@@ -700,7 +709,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-app text-main transition-colors duration-200">
-      <Header theme={theme} onToggleTheme={handleToggleTheme} onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} isBusy={!!nativeBusy || isRunning} />
+      <Header theme={theme} onToggleTheme={handleToggleTheme} onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} isBusy={!!nativeBusy || (isRunning && !isWatching)} />
 
       {pendingEdits && <AppDialog title="تغییرات ذخیره‌نشده" description={pendingEdits.allowDiscard ? 'پیش از کنارگذاشتن اسناد، تغییرات را ذخیره کنید.' : 'برای تبدیل، ابتدا تغییرات اسناد باید روی دیسک ذخیره شوند.'}
         onClose={() => { if (!savingEdits) setPendingEdits(null); }}
@@ -784,6 +793,7 @@ export const App: React.FC = () => {
           <InspectorPanel
             options={options}
             isRunning={isRunning}
+            isWatching={isWatching}
             hasDocuments={items.length > 0}
             outputDirBusy={nativeBusy === 'output-dir'}
             onOptionsChange={(key, value) => {
@@ -816,6 +826,8 @@ export const App: React.FC = () => {
             markdownContent={markdownContent}
             logs={logs}
             isRunning={isRunning}
+            isWatching={isWatching}
+            onStopConversion={handleCancel}
             theme={theme}
             activeTab={workspaceTab}
             onTabChange={setWorkspaceTab}
@@ -841,6 +853,7 @@ export const App: React.FC = () => {
         statusMessage={statusMessage}
         progressPercent={progressPercent}
         isRunning={isRunning}
+        isWatching={isWatching}
         totalItems={items.length}
         completedItems={completedCount}
       />
