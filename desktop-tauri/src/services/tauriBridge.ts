@@ -644,8 +644,8 @@ export async function loadPreviewDocument(
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
       if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
-      if (/\.ttf$/i.test(name)) return `/fonts/${name}`;
-      if (/mermaid.*\.js$/i.test(name)) return `/vendor/${name}`;
+      if (/\.ttf$/i.test(name)) return new URL(`/fonts/${name}`, window.location.href).href;
+      if (/mermaid.*\.js$/i.test(name)) return new URL(`/vendor/${name}`, window.location.href).href;
       return convertFileSrc(p);
     });
     return { kind: 'document', html: mapped.replace('</head>', `${viewerShellCss(pct, theme)}</head>`) };
@@ -669,8 +669,8 @@ export async function loadDraftPreview(path: string, text: string, signal?: Abor
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
       if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
-      if (/\.ttf$/i.test(name)) return `/fonts/${name}`;
-      if (/mermaid.*\.js$/i.test(name)) return `/vendor/${name}`;
+      if (/\.ttf$/i.test(name)) return new URL(`/fonts/${name}`, window.location.href).href;
+      if (/mermaid.*\.js$/i.test(name)) return new URL(`/vendor/${name}`, window.location.href).href;
       return convertFileSrc(p);
     }) };
   } catch (error) {

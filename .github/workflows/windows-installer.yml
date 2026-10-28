@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [feat/windows-installer]
-    paths-ignore: ['docs/**', 'README*']
+    paths-ignore: ['docs/**', 'README*', 'scripts/verify-*.py']
 
 permissions:
   contents: read
@@ -41,14 +41,24 @@ jobs:
       - name: Frontend tests
         working-directory: desktop-tauri
         run: npm test
-      - name: Build native app and offline installer
+      - name: Build native app
         working-directory: desktop-tauri
-        run: npm run tauri build -- --bundles nsis -- --locked
+        run: npm run tauri build -- --no-bundle -- --locked
       - name: Package testable native directory
         shell: pwsh
         run: |
           Copy-Item desktop-tauri/src-tauri/target/release/MdPersia.exe output/release/staging/MdPersia.exe
           Compress-Archive -Path output/release/staging/* -DestinationPath output/release/MdPersia-native.zip
+      - name: Save native acceptance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MdPersia-native-x64
+          path: output/release/MdPersia-native.zip
+          compression-level: 0
+          retention-days: 14
+      - name: Build offline installer
+        working-directory: desktop-tauri
+        run: npm run tauri bundle -- --bundles nsis
       - name: Save binaries and build evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,8 +66,8 @@ jobs:
           name: MdPersia-Windows-x64
           path: |
             desktop-tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
-            output/release/MdPersia-native.zip
             desktop-tauri/src-tauri/Cargo.lock
             output/release/acceptance/frozen-engine-report.json
           if-no-files-found: warn
           retention-days: 14
+          compression-level: 0
