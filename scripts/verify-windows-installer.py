@@ -112,7 +112,7 @@ def main():
                         '--output', str(output / 'frozen')], check=True)
         if not args.skip_native_ui:
             subprocess.run([sys.executable, str(root / 'scripts/verify-native-app.py'), str(install / 'MdPersia.exe'),
-                            '--output', str(output / 'native')], check=True)
+                            '--output', str(output / 'native'), '--registered-handler'], check=True)
     finally:
         try:
             uninstaller = install / 'uninstall.exe'

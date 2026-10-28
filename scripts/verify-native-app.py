@@ -6,6 +6,8 @@ mock bridge is involved. The executable and engine run with a restricted PATH.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import json
 import os
 from pathlib import Path
@@ -35,10 +37,38 @@ def owned_processes(directory: Path) -> list[dict]:
     return value if isinstance(value, list) else [value]
 
 
+def open_registered_markdown(path: Path) -> None:
+    class ShellInfo(ctypes.Structure):
+        _fields_ = [('cbSize', wintypes.DWORD), ('fMask', wintypes.ULONG),
+                    ('hwnd', wintypes.HWND), ('lpVerb', wintypes.LPCWSTR),
+                    ('lpFile', wintypes.LPCWSTR), ('lpParameters', wintypes.LPCWSTR),
+                    ('lpDirectory', wintypes.LPCWSTR), ('nShow', ctypes.c_int),
+                    ('hInstApp', wintypes.HINSTANCE), ('lpIDList', ctypes.c_void_p),
+                    ('lpClass', wintypes.LPCWSTR), ('hkeyClass', wintypes.HKEY),
+                    ('dwHotKey', wintypes.DWORD), ('hIcon', wintypes.HANDLE),
+                    ('hProcess', wintypes.HANDLE)]
+    shell = ctypes.WinDLL('shell32', use_last_error=True)
+    shell.ShellExecuteExW.argtypes = [ctypes.POINTER(ShellInfo)]
+    shell.ShellExecuteExW.restype = wintypes.BOOL
+    info = ShellInfo(cbSize=ctypes.sizeof(ShellInfo), fMask=0x1 | 0x40,
+                     lpVerb='open', lpFile=str(path), lpClass='MdPersia.Markdown', nShow=1)
+    if not shell.ShellExecuteExW(ctypes.byref(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    if info.hProcess:
+        kernel = ctypes.WinDLL('kernel32')
+        kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        try:
+            assert kernel.WaitForSingleObject(info.hProcess, 15000) == 0
+        finally:
+            kernel.CloseHandle(info.hProcess)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('executable', type=Path)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--registered-handler', action='store_true')
     args = parser.parse_args()
     exe, output = args.executable.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -92,6 +122,11 @@ def main() -> None:
                 subprocess.run([str(exe), str(file)], cwd=output, env=env, timeout=15, check=True)
             expect(page.locator('tbody tr')).to_have_count(3)
             frame.get_by_role('heading', name='سند سوم', exact=True).wait_for()
+            if args.registered_handler:
+                open_registered_markdown(second)
+                frame.get_by_role('heading', name='سند دوم', exact=True).wait_for()
+                expect(page.locator('tbody tr')).to_have_count(3)
+                report['windowsShellRegisteredHandlerOpensInExistingWindow'] = True
             subprocess.run([str(exe), str(first)], cwd=output, env=env, timeout=15, check=True)
             expect(page.locator('tbody tr')).to_have_count(3)
             frame.get_by_role('heading', name='سند نخست', exact=True).wait_for()
@@ -106,15 +141,19 @@ def main() -> None:
             frame.get_by_role('heading', name='سند ویرایش‌شده', exact=True).wait_for(timeout=15000)
             page.keyboard.press('Control+s')
             expect(page.get_by_role('button', name='ذخیره سند', exact=True)).to_be_disabled()
+            expect(page.get_by_role('img', name='تغییرات ذخیره‌نشده', exact=True)).to_have_count(0)
             assert first.read_bytes() == changed.replace('\n', '\r\n').encode('utf-8-sig')
             report['nativeLiveEditAndActualCtrlSSave'] = True
+            content.click()
             page.keyboard.insert_text('\nپیش‌نویس برای آزمون خروج\n')
+            expect(page.get_by_role('img', name='تغییرات ذخیره‌نشده', exact=True)).to_have_count(1)
             page.evaluate('void window.__TAURI_INTERNALS__.invoke("plugin:window|close",{label:"main"})')
             guard = page.get_by_role('dialog', name='تغییرات ذخیره‌نشده', exact=True)
             expect(guard).to_be_visible()
             guard.get_by_role('button', name='انصراف', exact=True).click()
             page.keyboard.press('Control+s')
             expect(page.get_by_role('button', name='ذخیره سند', exact=True)).to_be_disabled()
+            expect(page.get_by_role('img', name='تغییرات ذخیره‌نشده', exact=True)).to_have_count(0)
             report['nativeCloseGuardPreservesUnsavedEdits'] = True
             # Exercise the native directory command against actual files.
             scanned = page.evaluate('(folderPath)=>window.__TAURI_INTERNALS__.invoke("scan_folder",{folderPath,recursive:true})', str(output))
