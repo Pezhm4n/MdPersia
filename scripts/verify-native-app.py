@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 from ctypes import wintypes
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -69,6 +70,7 @@ def main() -> None:
     parser.add_argument('executable', type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--registered-handler', action='store_true')
+    parser.add_argument('--reuse-runtime', action='store_true', help='Skip first-install scenarios when resuming a failed acceptance run')
     args = parser.parse_args()
     exe, output = args.executable.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -94,7 +96,17 @@ def main() -> None:
     report = {'os': platform.platform(), 'executable': str(exe), 'restrictedPath': env['PATH']}
     errors = []
     try:
-        with sync_playwright() as p:
+        with sync_playwright() as p, ExitStack() as diagnostics:
+            def capture_diagnostics():
+                if proc.poll() is not None:
+                    return
+                try:
+                    (output / 'console-diagnostic.txt').write_text(page.locator('.console-report').text_content() or '', encoding='utf-8')
+                    (output / 'interaction-diagnostic.json').write_text(json.dumps(page.evaluate('window.__qaEvents || []'), ensure_ascii=False, indent=2), encoding='utf-8')
+                    page.screenshot(path=str(output / 'failure.png'))
+                except Exception:
+                    pass
+            diagnostics.callback(capture_diagnostics)
             deadline = time.monotonic() + 40
             while True:
                 try:
@@ -108,6 +120,7 @@ def main() -> None:
                     time.sleep(.1)
             browser = p.chromium.connect_over_cdp(f'http://127.0.0.1:{port}')
             page = browser.contexts[0].pages[0]
+            report['webViewVersion'] = browser.version
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.wait_for_function('Boolean(window.__TAURI_INTERNALS__)')
             frame = page.frame_locator('iframe')
@@ -118,6 +131,16 @@ def main() -> None:
             assert frame.locator('img').evaluate('(el)=>el.complete && el.naturalWidth>0')
             assert frame.locator('body').evaluate('async()=>{await document.fonts.ready;return document.fonts.check("16px Vazirmatn")}')
             report['nativePreviewWithLocalImageFontAndMermaid'] = True
+            runtime = page.evaluate('window.__TAURI_INTERNALS__.invoke("conversion_runtime_status")')
+            runtime_directory = Path(runtime['directory'].removeprefix('\\\\?\\'))
+            def application_processes():
+                return owned_processes(exe.parent) + owned_processes(runtime_directory)
+            report['initialConversionRuntime'] = runtime
+            if not args.reuse_runtime:
+                assert not runtime['installed'], 'Use --reuse-runtime only for an explicitly resumed run'
+                assert not (exe.parent / 'engine').exists()
+                assert not (exe.parent / 'browsers').exists()
+                report['readerWorksBeforeOptionalDownload'] = True
             for file in (second, third):
                 subprocess.run([str(exe), str(file)], cwd=output, env=env, timeout=15, check=True)
             expect(page.locator('tbody tr')).to_have_count(3)
@@ -163,6 +186,69 @@ def main() -> None:
             page.get_by_role('button', name='پایان ویرایش', exact=True).click()
             page.get_by_role('button', name='DOCX (Word)', exact=True).click()
             page.get_by_role('button', name='شروع تبدیل اسناد', exact=True).click()
+            if not runtime['installed']:
+                dialog = page.get_by_role('dialog', name='آماده‌سازی خروجی PDF و Word', exact=True)
+                expect(dialog).to_be_visible()
+                assert page.evaluate('window.__TAURI_INTERNALS__.invoke("conversion_runtime_status")')['phase'] == 'idle'
+                for _ in range(dialog.locator('button').count() + 2):
+                    page.keyboard.press('Tab')
+                    assert dialog.evaluate('el=>el.contains(document.activeElement)')
+                assert dialog.evaluate('el=>el.scrollWidth<=el.clientWidth')
+                page.keyboard.press('Escape')
+                expect(dialog).not_to_be_visible()
+                expect(page.get_by_role('button', name='شروع تبدیل اسناد', exact=True)).to_be_focused()
+                page.get_by_role('button', name='شروع تبدیل اسناد', exact=True).click()
+                expect(dialog).to_be_visible()
+                report['optionalDialogKeyboardContainmentEscapeAndFocusRestore'] = True
+                page.screenshot(path=str(output / 'optional-engine-dark.png'))
+                report['conversionRequiresExplicitDownload'] = True
+                # Exact-length corrupt input must fail SHA-256, before extraction.
+                corrupt = output / 'corrupt-conversion.zip'
+                with corrupt.open('wb') as handle:
+                    handle.truncate(runtime['totalBytes'])
+                rejected = page.evaluate('''async sourcePath => {
+                  try { await window.__TAURI_INTERNALS__.invoke("conversion_runtime_install", {sourcePath}); return null; }
+                  catch (error) { return String(error); }
+                }''', str(corrupt))
+                corrupt.unlink()
+                assert rejected and 'سالم' in rejected, rejected
+                assert not runtime_directory.exists()
+                assert not list(runtime_directory.parent.glob('.download-*'))
+                report['corruptSameLengthPackageRejectedBeforeExtraction'] = True
+                expect(dialog.get_by_role('alert')).to_be_visible()
+                page.screenshot(path=str(output / 'optional-engine-error.png'))
+                dialog.get_by_role('button', name='تلاش دوباره برای دریافت', exact=True).click()
+                dialog.get_by_role('button', name='توقف دریافت', exact=True).click()
+                expect(dialog.get_by_text('دریافت متوقف شد.', exact=False)).to_be_visible(timeout=15000)
+                cancelled = page.evaluate('window.__TAURI_INTERNALS__.invoke("conversion_runtime_status")')
+                assert not cancelled['installed'] and cancelled['phase'] == 'cancelled'
+                assert not runtime_directory.exists()
+                assert not list(runtime_directory.parent.glob('.download-*'))
+                report['downloadCancelLeavesNoPartialInstallation'] = True
+                dialog.get_by_role('button', name='دریافت موتور تبدیل', exact=True).click()
+                page.screenshot(path=str(output / 'optional-engine-downloading.png'))
+                dialog.get_by_role('button', name='ادامهٔ مطالعه', exact=True).click()
+                frame.get_by_role('heading', name='سند ویرایش‌شده', exact=True).wait_for()
+                report['readingContinuesDuringExplicitDownload'] = True
+                deadline = time.monotonic() + 900
+                previous = None
+                while time.monotonic() < deadline:
+                    status = page.evaluate('window.__TAURI_INTERNALS__.invoke("conversion_runtime_status")')
+                    progress = (status['phase'], status['downloadedBytes'] // (32 * 1048576))
+                    if progress != previous:
+                        print(json.dumps({'optionalRuntime': status['phase'], 'bytes': status['downloadedBytes']}, ensure_ascii=True), flush=True)
+                        previous = progress
+                    if status['installed']:
+                        break
+                    assert status['phase'] != 'error', status['error']
+                    page.wait_for_timeout(500)
+                else:
+                    raise TimeoutError('Optional conversion package did not become ready')
+                report['realPublicDownloadVerifiedAndInstalled'] = status
+                report['optionalInstalledFileBytes'] = sum(path.stat().st_size for path in runtime_directory.rglob('*') if path.is_file())
+                page.get_by_role('button', name='مدیریت موتور تبدیل', exact=True).click()
+                expect(dialog.get_by_text('موتور تبدیل آماده است', exact=True)).to_be_visible()
+                dialog.get_by_role('button', name='شروع تبدیل', exact=True).click()
             page.get_by_text('فرآیند تبدیل پایان یافت:', exact=False).wait_for(timeout=90000)
             assert page.get_by_text('فرآیند تبدیل پایان یافت: 3 موفق، 0 ناموفق.', exact=True).is_visible()
             for file in (first, second, third):
@@ -198,7 +284,7 @@ def main() -> None:
             settings.get_by_role('button', name='تمام', exact=True).click()
             assert not page.locator('html').evaluate('el=>el.classList.contains("dark")')
             page.screenshot(path=str(output / 'native-workspace.png'))
-            report['ownedProcessesWhileReading'] = owned_processes(exe.parent)
+            report['ownedProcessesWhileReading'] = application_processes()
             assert sum(row['Name'].lower() == 'mdpersia.exe' for row in report['ownedProcessesWhileReading']) == 1
             assert not any(row['Name'].lower() == 'chrome-headless-shell.exe' for row in report['ownedProcessesWhileReading'])
             report['noConversionBrowserRemainsWhileReading'] = True
@@ -207,10 +293,10 @@ def main() -> None:
             page.evaluate('void window.__TAURI_INTERNALS__.invoke("plugin:window|close",{label:"main"})')
             proc.wait(timeout=15)
             for _ in range(30):
-                if not owned_processes(exe.parent):
+                if not application_processes():
                     break
                 time.sleep(.1)
-            assert not owned_processes(exe.parent), 'Application children remained after exit'
+            assert not application_processes(), 'Application children remained after exit'
             report['engineAndConversionTreesStopOnExit'] = True
             # A normal launch reuses the installed profile, unlike the fresh-profile
             # first-launch timing above. Both measurements include CDP attachment.
@@ -224,6 +310,7 @@ def main() -> None:
                     again = p.chromium.connect_over_cdp(f'http://127.0.0.1:{port}', timeout=1000)
                     if again.contexts and again.contexts[0].pages:
                         page = again.contexts[0].pages[0]
+                        page.on('pageerror', lambda error: errors.append(str(error)))
                         break
                 except Exception:
                     if time.monotonic() > deadline:
@@ -234,21 +321,39 @@ def main() -> None:
             assert not page.locator('html').evaluate('el=>el.classList.contains("dark")')
             expect(page.locator('tbody tr')).to_have_count(1)
             report['preferencesPersistAndPreviousQueueDoesNotBecomeGhostFiles'] = True
+            assert page.evaluate('window.__TAURI_INTERNALS__.invoke("conversion_runtime_status")')['installed']
+            report['conversionResourcesReusedAcrossLaunches'] = True
             page.get_by_role('button', name='PDF', exact=True).click()
             page.get_by_role('button', name='شروع تبدیل اسناد', exact=True).click()
             page.get_by_text('فرآیند تبدیل پایان یافت: 1 موفق، 0 ناموفق.', exact=True).wait_for(timeout=60000)
             assert third.with_suffix('.pdf').read_bytes().startswith(b'%PDF-')
             report['realNativePdfConversion'] = True
+            page.evaluate('''() => {
+              window.__qaEvents=[];
+              for (const type of ['pointerdown','pointerup','click']) for (const capture of [true,false])
+                document.addEventListener(type, event => window.__qaEvents.push({type,capture,
+                  target: event.target.tagName+':'+event.target.textContent.slice(0,80),
+                  x:event.clientX,y:event.clientY,
+                  bounds:document.querySelector('dialog')?.getBoundingClientRect().toJSON()}), capture);
+            }''')
+            page.get_by_role('button', name='مدیریت موتور تبدیل', exact=True).click()
+            dialog = page.get_by_role('dialog', name='آماده‌سازی خروجی PDF و Word', exact=True)
+            page.screenshot(path=str(output / 'optional-engine-light.png'))
+            dialog.get_by_role('button', name='حذف موتور و آزادکردن فضا', exact=True).click()
+            expect(dialog.get_by_role('button', name='دریافت موتور تبدیل', exact=True)).to_be_visible(timeout=30000)
+            assert not runtime_directory.exists()
+            dialog.get_by_role('button', name='ادامهٔ مطالعه', exact=True).click()
+            page.get_by_role('tab', name='پیش‌نمایش سند', exact=True).click()
+            page.frame_locator('iframe').get_by_role('heading', name='سند سوم', exact=True).wait_for()
+            assert third.with_suffix('.pdf').read_bytes().startswith(b'%PDF-')
+            report['optionalRemovalPreservesReadingAndOutputDocuments'] = True
+            assert not errors, errors
+            report['pageErrors'] = errors
             page.evaluate('void window.__TAURI_INTERNALS__.invoke("plugin:window|close",{label:"main"})')
             proc.wait(timeout=15)
-            assert not owned_processes(exe.parent)
+            assert not application_processes()
     except Exception:
         report['pageErrors'] = errors
-        try:
-            (output / 'console-diagnostic.txt').write_text(page.locator('.console-report').text_content() or '', encoding='utf-8')
-            page.screenshot(path=str(output / 'failure.png'))
-        except Exception:
-            pass
         raise
     finally:
         if proc.poll() is None:

@@ -294,6 +294,16 @@ output_file = wrap_rtl_in_file(Path("docs/guide.md"))
 
 ## Installation
 
+### Windows desktop installer
+
+Run `MdPersia_*_x64-setup.exe` for the existing reader and editor. Setup has an enforced 30,000,000-byte limit and includes the private reader, fonts and Mermaid. Reading, previewing, editing and saving work offline. End users do not need to install Python or Node, or run the development commands below.
+
+PDF and Word use an optional conversion pack. Settings and the first conversion request show its download size; downloading starts only when selected. The app verifies its pinned SHA-256 before installation. Download cancellation, retry, ZIP import and removal are available. Conversion works offline after the pack is installed. If WebView2 is missing, the embedded Microsoft bootstrapper downloads that shared runtime during installation.
+
+MdPersia appears in the Start Menu and **Open with**. If another Markdown reader is the default, choose **Open with → Choose another app → MdPersia** and select the always-use option once. Existing Windows default-app choices are respected.
+
+See [Windows release instructions](docs/WINDOWS-RELEASE.md) for building and verifying the installer. Beta builds are unsigned unless a publisher certificate is configured; verify the signing status before public distribution.
+
 ### Via pip
 ```bash
 pip install mdpersia

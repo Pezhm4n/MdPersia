@@ -105,6 +105,7 @@ def main():
             for path, expected in manifest['files'].items():
                 assert hashlib.sha256((install / path).read_bytes()).hexdigest() == expected, path
         report['installAndReinstallPreserveExactBundledResources'] = True
+        report['installedFileBytes'] = sum(path.stat().st_size for path in install.rglob('*') if path.is_file())
         command = read_value(TREES[0]+r'\shell\open\command', '')['value']
         assert command == f'"{install / "MdPersia.exe"}" "%1"', command
         icon = read_value(TREES[0]+r'\DefaultIcon', '')['value']
