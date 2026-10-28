@@ -323,9 +323,12 @@ export async function onOpenFileRequested(
       for (const path of paths) if (MARKDOWN.test(path)) handler(path);
     };
     const unlisten = await listen('open-files', () => { void drain().catch(error => console.error('Opening document failed', error)); });
+    const unlistenDrop = await listen<{ paths: string[] }>('tauri://drag-drop', event => {
+      for (const path of event.payload.paths) if (MARKDOWN.test(path)) handler(path);
+    });
     // Catch launches delivered between startup and listener registration.
     await drain();
-    return unlisten;
+    return () => { unlisten(); unlistenDrop(); };
   } catch {
     return () => {};
   }
@@ -620,6 +623,7 @@ export async function loadPreviewDocument(
     // A webview cannot load file://; route local assets through the asset protocol.
     const mapped = html.replace(/file:\/\/([^"')\s]+)/g, (_m, raw: string) => {
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
+      if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
       if (/\.ttf$/i.test(name)) return `/fonts/${name}`;
       if (/mermaid.*\.js$/i.test(name)) return `/vendor/${name}`;
@@ -644,6 +648,7 @@ export async function loadDraftPreview(path: string, text: string, signal?: Abor
     const { html } = await invoke<{ html: string }>('preview_html', { request: { path, text, theme: 'light', zoom: 100 } });
     return { kind: 'document', html: html.replace(/file:\/\/([^"')\s]+)/g, (_match, raw: string) => {
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
+      if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
       if (/\.ttf$/i.test(name)) return `/fonts/${name}`;
       if (/mermaid.*\.js$/i.test(name)) return `/vendor/${name}`;

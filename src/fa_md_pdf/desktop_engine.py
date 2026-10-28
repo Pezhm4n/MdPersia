@@ -53,9 +53,11 @@ def doctor(root: Path) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if sys.stdout is not None:
-        sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
-        sys.stderr.reconfigure(encoding='utf-8', line_buffering=True)
+    # Frozen CPython does not inherit all interpreter environment settings.
+    # Explicitly decode Rust's UTF-8 input, including Persian paths and draft text.
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if stream is not None:
+            stream.reconfigure(encoding='utf-8', line_buffering=True)
     parser = argparse.ArgumentParser(prog='mdpersia-engine')
     parser.add_argument('--assets-dir')
     mode = parser.add_mutually_exclusive_group(required=True)
