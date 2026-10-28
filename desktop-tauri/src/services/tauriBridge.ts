@@ -607,6 +607,25 @@ export type PreviewSource =
  * The dev runtime streams preview HTML from the local bridge; the packaged app has no
  * server, so it asks the Rust command and hands the result to the iframe directly.
  */
+function resolvePreviewResources(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const base = document.querySelector('base')?.getAttribute('href');
+  if (!base) return html;
+  // Tauri encodes a file path as one URL segment. Relative resources cannot be
+  // resolved against that URL, so resolve them against the original file base first.
+  for (const element of document.querySelectorAll('[src], [poster], link[href]')) {
+    for (const attribute of ['src', 'poster', ...(element.tagName === 'LINK' ? ['href'] : [])]) {
+      const value = element.getAttribute(attribute);
+      if (!value) continue;
+      try {
+        const resolved = new URL(value, base);
+        if (resolved.protocol === 'file:') element.setAttribute(attribute, resolved.href);
+      } catch { /* Preserve an invalid author-supplied URL for the browser to reject. */ }
+    }
+  }
+  return '<!doctype html>\n' + document.documentElement.outerHTML;
+}
+
 export async function loadPreviewDocument(
   path: string,
   theme: 'dark' | 'light',
@@ -621,7 +640,7 @@ export async function loadPreviewDocument(
       request: { path, theme, zoom: pct },
     });
     // A webview cannot load file://; route local assets through the asset protocol.
-    const mapped = html.replace(/file:\/\/([^"')\s]+)/g, (_m, raw: string) => {
+    const mapped = resolvePreviewResources(html).replace(/file:\/\/([^"')\s]+)/g, (_m, raw: string) => {
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
       if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
@@ -646,7 +665,7 @@ export async function loadDraftPreview(path: string, text: string, signal?: Abor
     }
     const { invoke, convertFileSrc } = await import('@tauri-apps/api/core');
     const { html } = await invoke<{ html: string }>('preview_html', { request: { path, text, theme: 'light', zoom: 100 } });
-    return { kind: 'document', html: html.replace(/file:\/\/([^"')\s]+)/g, (_match, raw: string) => {
+    return { kind: 'document', html: resolvePreviewResources(html).replace(/file:\/\/([^"')\s]+)/g, (_match, raw: string) => {
       const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
       if (/\.(md|markdown)(?:[?#].*)?$/i.test(p)) return `file://${raw}`;
       const name = p.split(/[\\/]/).pop() || '';
