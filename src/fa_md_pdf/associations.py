@@ -234,7 +234,7 @@ def resolve_viewer_exe(project_root: Path, override: str | Path | None = None) -
     if override:
         return Path(override)
     release = (
-        project_root / "desktop-tauri" / "src-tauri" / "target" / "release" / "fa-md-pdf-desktop.exe"
+        project_root / "desktop-tauri" / "src-tauri" / "target" / "release" / "MdPersia.exe"
     )
     if release.is_file():
         return release

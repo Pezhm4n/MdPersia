@@ -1,7 +1,7 @@
 {
   "name": "fa-md-pdf-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.3.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -20,8 +20,6 @@
     "@lezer/highlight": "^1.2.5",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
-    "@tauri-apps/plugin-fs": "^2.6.0",
-    "@tauri-apps/plugin-shell": "^2.2.0",
     "lucide-react": "^1.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

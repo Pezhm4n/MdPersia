@@ -162,30 +162,17 @@ export async function executeConversion(
     try {
       let code = 0;
       if (isTauri()) {
-        const { Command } = await import('@tauri-apps/plugin-shell');
-        const cmd = Command.create('fa-md-pdf', args);
-
-        cmd.stdout.on('data', (line: string) => {
-          observeStdout(line + '\n');
-          onLog({
-            id: `stdout-${Date.now()}-${Math.random()}`,
-            timestamp: getTimestamp(),
-            level: 'info',
-            message: line,
-          });
-        });
-
-        cmd.stderr.on('data', (line: string) => {
-          onLog({
-            id: `stderr-${Date.now()}-${Math.random()}`,
-            timestamp: getTimestamp(),
-            level: stderrLogLevel(line),
-            message: line,
-          });
-        });
-
-        const output = await cmd.execute();
-        code = output.code ?? 1;
+        const { invoke, Channel } = await import('@tauri-apps/api/core');
+        const id = `conversion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const events = new Channel<{ type: 'stdout' | 'stderr'; text: string }>();
+        events.onmessage = event => {
+          if (event.type === 'stdout' && !activeCancellation) observeStdout(event.text);
+          log(onLog, event.type === 'stderr' ? stderrLogLevel(event.text) : 'info', event.text.trimEnd());
+        };
+        const pending = invoke<number>('run_conversion', { id, args, events });
+        cancelCurrentJob = () => invoke<void>('cancel_conversion', { id });
+        if (activeCancellation) await cancelCurrentJob();
+        code = await pending;
       } else {
         code = await executeWebConversionJob(args, onLog, observeStdout);
       }
@@ -330,9 +317,14 @@ export async function onOpenFileRequested(
   }
   try {
     const { listen } = await import('@tauri-apps/api/event');
-    const unlisten = await listen<string[]>('open-files', (evt) => {
-      for (const path of evt.payload || []) if (MARKDOWN.test(path)) handler(path);
-    });
+    const { invoke } = await import('@tauri-apps/api/core');
+    const drain = async () => {
+      const paths = await invoke<string[]>('startup_arguments');
+      for (const path of paths) if (MARKDOWN.test(path)) handler(path);
+    };
+    const unlisten = await listen('open-files', () => { void drain().catch(error => console.error('Opening document failed', error)); });
+    // Catch launches delivered between startup and listener registration.
+    await drain();
     return unlisten;
   } catch {
     return () => {};
@@ -345,8 +337,10 @@ export async function onOpenFileRequested(
 export async function readFileContent(filePath: string): Promise<NativeOutcome<string>> {
   if (isTauri()) {
     try {
-      const { readTextFile } = await import('@tauri-apps/plugin-fs');
-      return { value: await readTextFile(filePath), cancelled: false };
+      const { invoke } = await import('@tauri-apps/api/core');
+      const result = await invoke<{ document?: { text: string }; error?: string }>('document_io', { request: { operation: 'read', path: filePath } });
+      if (!result.document) throw new Error(result.error || 'فایل خوانده نشد.');
+      return { value: result.document.text, cancelled: false };
     } catch (err: any) {
       return { value: '', cancelled: false, error: err.message || String(err) };
     }
@@ -369,23 +363,10 @@ export async function readFileContent(filePath: string): Promise<NativeOutcome<s
 
 async function statFiles(paths: string[]): Promise<PickedFile[]> {
   if (isTauri()) {
-    const { stat } = await import('@tauri-apps/plugin-fs');
-    const out: PickedFile[] = [];
-    for (const p of paths) {
-      let size = 0;
-      try {
-        size = (await stat(p)).size ?? 0;
-      } catch {
-        // Unreadable size must not block adding the file to the queue.
-      }
-      out.push({
-        name: p.replace(/^.*[\\/]/, ''),
-        path: p.replace(/\\/g, '/'),
-        sizeBytes: size,
-        sizeStr: `${(size / 1024).toFixed(1)} KB`,
-      });
-    }
-    return out;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<PickedFile[]>('stat_files', { paths });
+    } catch { /* An unreadable size must not prevent an explicit file open. */ }
   }
   return paths.map((p) => ({
     name: p.replace(/^.*[\\/]/, ''),
@@ -474,6 +455,10 @@ export async function scanFolder(
   recursive: boolean = true
 ): Promise<NativeOutcome<ScannedFile[]>> {
   try {
+    if (isTauri()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return { value: await invoke<ScannedFile[]>('scan_folder', { folderPath, recursive }), cancelled: false };
+    }
     const res = await fetch('/api/scan-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -498,11 +483,8 @@ export async function openInExplorer(targetPath: string): Promise<NativeOutcome<
 
   if (isTauri()) {
     try {
-      const { Command } = await import('@tauri-apps/plugin-shell');
-      const winPath = p.replace(/\//g, '\\');
-      const isFile = /\.[a-zA-Z0-9]+$/.test(winPath);
-      const args = isFile ? [`/select,${winPath}`] : [winPath];
-      await Command.create('explorer', args).execute();
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('reveal_path', { targetPath: p });
       return { value: true, cancelled: false };
     } catch (err: any) {
       return { value: false, cancelled: false, error: err.message || String(err) };
@@ -548,13 +530,8 @@ export async function fetchInitialItems(file?: string | null): Promise<InitialLo
 }
 
 async function queueItemFromPath(filePath: string): Promise<QueueItem> {
-  let sizeBytes = 0;
-  try {
-    const { stat } = await import('@tauri-apps/plugin-fs');
-    sizeBytes = (await stat(filePath)).size ?? 0;
-  } catch {
-    // An unreadable size must not stop the document from opening.
-  }
+  const [file] = await statFiles([filePath]);
+  const sizeBytes = file?.sizeBytes ?? 0;
   const name = filePath.replace(/^.*[\\/]/, '');
   return {
     id: `document:${filePath}`,
@@ -680,3 +657,11 @@ export async function loadDraftPreview(path: string, text: string, signal?: Abor
 
 export type { LogEntry };
 export { log as pushLog };
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (!/^https?:\/\//i.test(url)) throw new Error('فقط پیوند وب قابل بازشدن است.');
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('open_external', { url });
+  } else window.open(url, '_blank', 'noopener,noreferrer');
+}

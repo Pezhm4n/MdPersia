@@ -13,7 +13,7 @@ import {
   Pencil, Save, Copy, Check, X,
 } from 'lucide-react';
 import { Tooltip } from '../Tooltip';
-import { applyPreviewAppearance, loadPreviewDocument, loadDraftPreview, PreviewSource } from '../../services/tauriBridge';
+import { openExternalUrl, applyPreviewAppearance, loadPreviewDocument, loadDraftPreview, PreviewSource } from '../../services/tauriBridge';
 import { linkedMarkdownPath } from '../../services/queueState';
 import type { ReadingSettings } from '../../services/appSettings';
 import { draftIsDirty, type DocumentEditor, type EditorDraft } from '../../services/useDocumentEditor';
@@ -385,7 +385,7 @@ export const PreviewTab: React.FC<PreviewTabProps> = ({
                     const target = link && linkedMarkdownPath(path, link.getAttribute('href') || '');
                     if (target && onOpenDocument) { event.preventDefault(); onOpenDocument(target); }
                     else if (link && /^https?:/i.test(link.getAttribute('href') || '')) {
-                      event.preventDefault(); window.open(link.getAttribute('href')!, '_blank', 'noopener,noreferrer');
+                      event.preventDefault(); void openExternalUrl(link.getAttribute('href')!).catch(error => console.error(error));
                     }
                   });
                   doc.addEventListener('scroll', () => {

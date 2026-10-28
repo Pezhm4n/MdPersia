@@ -662,7 +662,7 @@ def _run_gui(args: argparse.Namespace) -> int:
         / "src-tauri"
         / "target"
         / "release"
-        / "fa-md-pdf-desktop.exe"
+        / "MdPersia.exe"
     )
     if release_exe.is_file():
         cmd = [str(release_exe)]

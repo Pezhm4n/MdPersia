@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -88,6 +89,8 @@ def render_mermaid_to_png(
 
     with sync_playwright() as playwright:
         def _launch_browser(pw):
+            if os.environ.get('MDPERSIA_BUNDLED_ENGINE') == '1':
+                return pw.chromium.launch(headless=True)
             for kw in (
                 {"headless": True},
                 {"headless": True, "channel": "msedge"},

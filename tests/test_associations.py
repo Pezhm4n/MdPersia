@@ -101,7 +101,7 @@ def test_resolve_viewer_exe_prefers_override_then_release(tmp_path, monkeypatch)
 
     release = tmp_path / "desktop-tauri" / "src-tauri" / "target" / "release"
     release.mkdir(parents=True)
-    exe = release / "fa-md-pdf-desktop.exe"
+    exe = release / "MdPersia.exe"
     exe.write_bytes(b"")
     assert associations.resolve_viewer_exe(tmp_path) == exe
 
