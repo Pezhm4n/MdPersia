@@ -20,6 +20,41 @@ from fa_md_pdf.cli import (
 from fa_md_pdf.converter import ConversionError
 
 
+@pytest.mark.parametrize('changed_ok', [True, False])
+def test_watch_reconversion_reports_actual_result_and_returns_to_waiting(tmp_path, monkeypatch, capsys, changed_ok):
+    import os
+    import time
+    from fa_md_pdf import converter
+
+    source = tmp_path / 'watched.md'
+    source.write_text('# Watch test', encoding='utf-8')
+    calls = []
+
+    def convert(jobs, **_kwargs):
+        calls.append(jobs)
+        ok = len(calls) == 1 or changed_ok
+        return [converter.ConvertResult(job, ok, None if ok else 'reconversion failed') for job in jobs]
+
+    ticks = 0
+
+    def tick(_seconds):
+        nonlocal ticks
+        ticks += 1
+        if ticks > 1:
+            raise KeyboardInterrupt
+        later = source.stat().st_mtime + 2
+        os.utime(source, (later, later))
+
+    monkeypatch.setattr(converter, 'convert_jobs', convert)
+    monkeypatch.setattr(time, 'sleep', tick)
+    assert main([str(source), '--format', 'docx', '--watch']) == 0
+    captured = capsys.readouterr()
+    assert len(calls) == 2
+    assert '[fa-md-pdf] Waiting for changes.' in captured.out
+    assert captured.out.count('OK  ') == (2 if changed_ok else 1)
+    assert ('reconversion failed' in captured.err) is (not changed_ok)
+
+
 def test_parser_defaults():
     parser = build_parser()
     args = parser.parse_args(["input.md"])

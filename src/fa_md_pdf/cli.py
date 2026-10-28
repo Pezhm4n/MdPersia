@@ -426,6 +426,7 @@ def _run_wrap_rtl(args: argparse.Namespace) -> int:
                         except Exception as ex:  # noqa: BLE001
                             print(f"ERR {s}: {ex}", file=sys.stderr)
                     last_mtimes = get_wrap_mtimes()
+                    print('[fa-md-pdf] Waiting for changes.')
         except KeyboardInterrupt:
             print("\n[fa-md-pdf] Watch stopped.")
 
@@ -843,10 +844,15 @@ def main(argv: list[str] | None = None) -> int:
                     if changed:
                         print(f"\n[fa-md-pdf] Detected changes in {len(changed)} file(s). Re-converting...")
                         changed_jobs = [j for j in jobs if j.source in set(changed)]
-                        convert_jobs(changed_jobs, options=options, fail_fast=False)
-                        for cj in changed_jobs:
-                            print(f"OK  {cj.source} -> {cj.output}")
+                        changed_results = convert_jobs(changed_jobs, options=options, fail_fast=False)
+                        for result in changed_results:
+                            if result.ok:
+                                print(f"OK  {result.job.source} -> {result.job.output}")
+                            else:
+                                print(f"ERR {result.job.source}", file=sys.stderr)
+                                print(f"    {result.error}", file=sys.stderr)
                         last_mtimes = current_mtimes
+                        print('[fa-md-pdf] Waiting for changes.')
             except KeyboardInterrupt:
                 print("\n[fa-md-pdf] Stopped watching.")
                 return 0
