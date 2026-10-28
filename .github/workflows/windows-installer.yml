@@ -39,7 +39,8 @@ jobs:
           digest = hashlib.sha256(setup.read_bytes()).hexdigest()
           assert digest == 'd07b235ad93c3a97990a34c52bddc6453690c82592626c2118f9ad50278891f9'
           assert setup.stat().st_size == 15832533
-          Path('output/publish/SHA256SUMS.txt').write_text(f'{digest}  {setup.name}\n')
+          # Match the accepted Windows checksum file byte-for-byte on Linux too.
+          Path('output/publish/SHA256SUMS.txt').write_bytes(f'{digest}  {setup.name}\r\n'.encode('ascii'))
           print(f'Accepted artifact: {setup.name}, {setup.stat().st_size} bytes, SHA-256 {digest}')
           PY
       - name: Upload accepted assets and publish the prepared beta
