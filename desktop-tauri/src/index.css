@@ -114,7 +114,6 @@
 .markdown-editor .cm-search label { display: inline-flex; align-items: center; gap: 4px; }
 .markdown-editor .cm-button { background-image: none; }
 .markdown-editor .cm-content { min-height: 100%; }
-.editor-format-bar .tip { white-space: normal; }
 @media (prefers-reduced-motion: reduce) {
   .markdown-editor * { scroll-behavior: auto !important; }
 }
@@ -224,12 +223,13 @@ input[type='radio']:focus-visible {
 .tip {
   position: fixed;
   z-index: 60;
-  max-width: 240px;
+  max-width: min(240px, calc(100vw - 16px));
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 11px;
   line-height: 1.5;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   pointer-events: none;
   color: var(--text-main);
   background-color: var(--bg-surface);
@@ -238,8 +238,11 @@ input[type='radio']:focus-visible {
   animation: tip-in 120ms ease-out;
 }
 @keyframes tip-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tip { animation: none; }
 }
 
 

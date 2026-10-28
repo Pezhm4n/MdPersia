@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
-import { EditorView, keymap, drawSelection, highlightSpecialChars, Decoration, ViewPlugin } from '@codemirror/view';
+import { EditorView, keymap, highlightSpecialChars, Decoration, ViewPlugin } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultHighlightStyle, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -55,11 +55,11 @@ export default function MarkdownEditor({ path, text, theme, readOnly, onChange, 
   const themeExtension = (dark: boolean) => [EditorView.theme({
     '&': { height: '100%', color: 'var(--text-main)', backgroundColor: 'var(--bg-card)', fontSize: '14px' },
     '.cm-scroller': { overflow: 'auto', fontFamily: '"Vazirmatn", Consolas, monospace', lineHeight: '1.9' },
-    '.cm-content': { padding: '14px 18px', caretColor: 'var(--text-main)' },
-    '.cm-line': { unicodeBidi: 'plaintext', textAlign: 'start' },
-    '.cm-cursor': { borderLeftColor: 'var(--text-main)' },
+    '.cm-content': { padding: '14px 18px', caretColor: 'var(--text-main)', userSelect: 'text' },
+    // Let each line's dir=auto use the same isolated paragraph direction read by CodeMirror.
+    '.cm-line': { unicodeBidi: 'isolate', textAlign: 'start' },
     '&.cm-focused': { outline: 'none' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': { background: dark ? '#26416a' : '#c7ddff' },
+    '.cm-content::selection, .cm-content ::selection': { backgroundColor: dark ? '#26416a' : '#c7ddff' },
     '.cm-panels': { color: 'var(--text-main)', background: 'var(--bg-surface)', fontFamily: 'var(--font-sans)' },
     '.cm-searchMatch': { backgroundColor: dark ? '#675120' : '#fef08a' },
     '.cm-search input': { color: 'var(--text-main)', background: 'var(--input-bg)', border: '1px solid var(--border-subtle)', padding: '4px', maxWidth: '100%' },
@@ -69,10 +69,11 @@ export default function MarkdownEditor({ path, text, theme, readOnly, onChange, 
   useEffect(() => {
     const cached = states.current.get(path);
     const state = cached?.doc.toString() === text ? cached : EditorState.create({ doc: text, extensions: [
-      history(), drawSelection(), highlightSpecialChars(), EditorView.lineWrapping,
+      // Use the browser's primary caret/selection so glyph shaping and the caret share one layout.
+      history(), highlightSpecialChars(), EditorView.lineWrapping,
       EditorView.perLineTextDirection.of(true), lineDirections, markdown(),
       EditorState.phrases.of({ 'Find': 'جستجو', 'Replace': 'جایگزینی', 'next': 'بعدی', 'previous': 'قبلی', 'all': 'همه', 'match case': 'تطبیق حروف', 'regexp': 'عبارت منظم', 'by word': 'کلمهٔ کامل', 'replace': 'جایگزین', 'replace all': 'جایگزینی همه', 'close': 'بستن' }),
-      EditorView.contentAttributes.of({ 'aria-label': 'ویرایش متن Markdown', dir: 'auto', spellcheck: 'false' }),
+      EditorView.contentAttributes.of({ 'aria-label': 'ویرایش متن Markdown', dir: 'ltr', spellcheck: 'false' }),
       appearance.current.of(themeExtension(theme === 'dark')), editable.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
       keymap.of([{ key: 'Mod-s', run: () => { callbacks.current.onSave(); return true; } },
         { key: 'Mod-Shift-z', run: redo, preventDefault: true },
@@ -82,7 +83,12 @@ export default function MarkdownEditor({ path, text, theme, readOnly, onChange, 
     ] });
     const editor = new EditorView({ state, parent: host.current! });
     view.current = editor; editor.focus();
-    return () => { states.current.set(path, editor.state); editor.destroy(); view.current = null; };
+    const remeasure = () => editor.requestMeasure();
+    document.fonts.addEventListener('loadingdone', remeasure);
+    return () => {
+      document.fonts.removeEventListener('loadingdone', remeasure);
+      states.current.set(path, editor.state); editor.destroy(); view.current = null;
+    };
     // Each document owns its undo history; ordinary typing must never recreate the editor.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
