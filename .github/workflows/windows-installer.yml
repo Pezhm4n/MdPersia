@@ -57,7 +57,9 @@ jobs:
                   'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
                   'User-Agent': 'MdPersia-release', 'Content-Type': mime})
               with urllib.request.urlopen(req, timeout=180) as response: return json.load(response)
-          release = request(base + '/releases/tags/desktop-v0.3.0-beta.2')
+          # Draft releases have no public tag lookup until they are published.
+          release = next(r for r in request(base + '/releases')
+                         if r['tag_name'] == 'desktop-v0.3.0-beta.2')
           assert release['target_commitish'] == 'b919fa9f0c9e6b098c6144e4f7241423600213dc'
           files = [next(Path('output/publish').rglob('*-setup.exe')),
                    Path('output/publish/SHA256SUMS.txt'), Path('docs/WINDOWS-ACCEPTANCE.md')]
