@@ -23,6 +23,7 @@ import { Tooltip } from './Tooltip';
 interface InspectorPanelProps {
   options: ConvertOptions;
   isRunning: boolean;
+  hasDocuments?: boolean;
   /** Waiting on the native folder dialog for the output directory. */
   outputDirBusy?: boolean;
   onOptionsChange: <K extends keyof ConvertOptions>(key: K, value: ConvertOptions[K]) => void;
@@ -47,6 +48,7 @@ const TABS: { id: TabKey; label: string; icon: React.ComponentType<{ className?:
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   options,
   isRunning,
+  hasDocuments = true,
   outputDirBusy = false,
   onOptionsChange,
   onConvert,
@@ -208,7 +210,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         <div className="flex gap-2">
           <button
             onClick={onConvert}
-            disabled={isRunning}
+            disabled={isRunning || !hasDocuments}
             className="btn flex-1 py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-lg shadow-blue-600/20"
             title="اجرای تبدیل روی همهٔ اسناد صف"
           >

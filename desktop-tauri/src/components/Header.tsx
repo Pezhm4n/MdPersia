@@ -1,22 +1,22 @@
 import React from 'react';
-import { Sparkles, Sun, Moon, Loader2 } from 'lucide-react';
+import { Sparkles, Sun, Moon, Loader2, Settings } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 
 interface HeaderProps {
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  onOpenSettings: () => void;
+  settingsOpen?: boolean;
   onOpenHelp?: () => void;
   isBusy?: boolean;
 }
 
-export const Header: React.FC<HeaderProps> = ({ theme, onToggleTheme, onOpenHelp, isBusy }) => {
+export const Header: React.FC<HeaderProps> = ({ theme, onToggleTheme, onOpenSettings, settingsOpen, onOpenHelp, isBusy }) => {
   return (
     <header className="h-12 bg-surface border-b border-main flex items-center justify-between px-4 select-none shrink-0 gap-3 transition-colors duration-200">
       {/* Brand */}
       <div className="flex items-center gap-3 min-w-0">
-        <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/20 shrink-0">
-          <Sparkles className="w-4 h-4" />
-        </div>
+        <img src="/mdpersia.svg" alt="" className="w-7 h-7 shrink-0" />
         <div className="flex items-baseline gap-2 min-w-0">
           <h1 className="text-sm font-bold text-main font-mono tracking-tight whitespace-nowrap">
             MdPersia
@@ -37,6 +37,13 @@ export const Header: React.FC<HeaderProps> = ({ theme, onToggleTheme, onOpenHelp
         )}
 
         <div className="w-px h-5 bg-subtle mx-1" aria-hidden="true" />
+
+        <Tooltip label="تنظیمات برنامه (Ctrl+,)">
+          <button onClick={onOpenSettings} className="btn p-1.5 rounded-md hover:bg-subtle text-muted hover:text-main"
+            aria-label="تنظیمات برنامه" aria-haspopup="dialog" aria-expanded={settingsOpen}>
+            <Settings className="w-4 h-4" />
+          </button>
+        </Tooltip>
 
         <Tooltip label={theme === 'dark' ? 'تغییر به حالت روشن' : 'تغییر به حالت تاریک'}>
           <button

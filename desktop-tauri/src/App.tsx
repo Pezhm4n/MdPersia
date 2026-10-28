@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react';
 import { QueueItem, ConvertOptions, LogEntry, ProgressEvent } from './types';
 import { DEFAULT_CONVERT_OPTIONS } from './services/cliTranslator';
 import {
@@ -10,11 +10,16 @@ import {
   openInExplorer,
   readFileContent,
   fetchInitialItems,
-  resolveStartupFile,
+  resolveStartupFiles,
   onOpenFileRequested,
   isTauri,
 } from './services/tauriBridge';
-import { handOffToRunningInstance, listenForHandoffs } from './services/singleInstance';
+import { listenForHandoffs } from './services/singleInstance';
+import { documentKey, mergeQueueItems, removeQueueItems } from './services/queueState';
+import { DEFAULT_APP_SETTINGS, readPreferences, savePreferences, type AppSettings } from './services/appSettings';
+import { draftIsDirty, useDocumentEditor } from './services/useDocumentEditor';
+import type { DocumentSnapshot } from './services/documents';
+import { AppDialog } from './components/AppDialog';
 import { Header } from './components/Header';
 import { StatusBar } from './components/StatusBar';
 import { QueuePanel } from './components/QueuePanel';
@@ -24,6 +29,7 @@ import { PaneSplitter } from './components/PaneSplitter';
 
 type NativeBusy = 'files' | 'folder' | 'output-dir' | 'explorer' | null;
 type WorkspaceTab = 'preview' | 'terminal';
+const SettingsDialog = lazy(() => import('./components/SettingsDialog'));
 
 const QUEUE_MIN = 300;
 const QUEUE_MAX = 640;
@@ -54,14 +60,23 @@ const storeWidth = (key: string, value: number): void => {
 };
 
 export const App: React.FC = () => {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    try {
-      const saved = localStorage.getItem('theme');
-      return saved === 'light' || saved === 'dark' ? saved : 'dark';
-    } catch {
-      return 'dark';
-    }
-  });
+  const [initialPreferences] = useState(readPreferences);
+  const [settings, setSettings] = useState(initialPreferences.settings);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const theme = settings.theme === 'system' ? (systemDark ? 'dark' : 'light') : settings.theme;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  const [settingsNotice, setSettingsNotice] = useState('');
+  const [pendingEdits, setPendingEdits] = useState<{ paths: string[]; next: () => void; allowDiscard: boolean } | null>(null);
+  const [savingEdits, setSavingEdits] = useState(false);
+  const [pendingError, setPendingError] = useState('');
+  const changeSettings = useCallback((patch: Partial<AppSettings>) => {
+    setSettings(previous => ({ ...previous, ...patch }));
+    setSettingsNotice('');
+  }, []);
 
   const [queueWidth, setQueueWidth] = useState<number>(() =>
     storedWidth('pane_queue_width_v2', queueDefault(), QUEUE_MIN, QUEUE_MAX)
@@ -73,18 +88,20 @@ export const App: React.FC = () => {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [options, setOptions] = useState<ConvertOptions>(DEFAULT_CONVERT_OPTIONS);
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const activeItemRef = useRef(activeItemId);
+  activeItemRef.current = activeItemId;
+  const [options, setOptions] = useState<ConvertOptions>(initialPreferences.options);
   const [markdownContent, setMarkdownContent] = useState<string>('');
   const [query, setQuery] = useState('');
   const [nativeBusy, setNativeBusy] = useState<NativeBusy>(null);
-  const [handedOff, setHandedOff] = useState<string | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('preview');
-  const [zoom, setZoom] = useState(100);
+  const zoom = settings.previewZoom;
   const [previewNonce, setPreviewNonce] = useState(0);
 
   const appendLog = useCallback((level: LogEntry['level'], message: string) => {
     setLogs((prev) => [
-      ...prev,
+      ...prev.slice(-999),
       { id: `${level}-${Date.now()}-${Math.random()}`, timestamp: new Date().toLocaleTimeString(), level, message },
     ]);
   }, []);
@@ -104,6 +121,47 @@ export const App: React.FC = () => {
 
   const itemsRef = useRef(items);
   itemsRef.current = items;
+  const openRequest = useRef(0);
+  const queueEpoch = useRef(0);
+  const removedRequests = useRef(new Map<string, number>());
+  const selectionAnchor = useRef<string | null>(null);
+  const updateQueue = useCallback((update: (items: QueueItem[]) => QueueItem[]) => {
+    itemsRef.current = update(itemsRef.current);
+    setItems(itemsRef.current);
+  }, []);
+  const editor = useDocumentEditor(useCallback((document: DocumentSnapshot) => {
+    updateQueue(current => current.map(item => documentKey(item.path) === documentKey(document.path)
+      ? { ...item, sizeBytes: document.sizeBytes, sizeStr: `${(document.sizeBytes / 1024).toFixed(1)} KB`, status: 'pending', error: undefined } : item));
+    const active = itemsRef.current.find(item => item.id === activeItemRef.current);
+    if (active && documentKey(active.path) === documentKey(document.path)) { setMarkdownContent(document.text); setPreviewNonce(value => value + 1); }
+    setStatusMessage('تغییرات سند ذخیره شد.');
+  }, [updateQueue]));
+  const guardEdits = (paths: string[], next: () => void, allowDiscard = true) => {
+    if (paths.some(path => editor.ref.current[documentKey(path)]?.saving)) {
+      setStatusMessage('ذخیره در حال انجام است؛ چند لحظه صبر کنید.'); return;
+    }
+    const dirty = paths.filter(path => draftIsDirty(editor.ref.current[documentKey(path)]));
+    if (!dirty.length) { next(); return; }
+    setPendingError(''); setPendingEdits({ paths: dirty, next, allowDiscard });
+  };
+
+  const appendItems = useCallback((incoming: QueueItem[], message?: string, focus = true, forceFocus = false) => {
+    const shouldFocus = focus && (forceFocus || settingsRef.current.focusNewFiles || !activeItemRef.current);
+    const merged = mergeQueueItems(itemsRef.current, incoming);
+    itemsRef.current = merged.items;
+    setItems(merged.items);
+    if (shouldFocus && merged.focusedId) {
+      activeItemRef.current = merged.focusedId;
+      setActiveItemId(merged.focusedId);
+      setWorkspaceTab('preview');
+      setPreviewNonce(nonce => nonce + 1);
+      selectionAnchor.current = merged.focusedId;
+      setSelectedIds(new Set([merged.focusedId]));
+      setQuery('');
+    }
+    if (message) setStatusMessage(message);
+    return { ...merged, focused: shouldFocus };
+  }, []);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -111,39 +169,50 @@ export const App: React.FC = () => {
     } else {
       document.documentElement.classList.remove('dark');
     }
-    try {
-      localStorage.setItem('theme', theme);
-    } catch {
-      // Ignore
-    }
   }, [theme]);
 
-  /** Load the document the OS handed us (double-click / open-with), else the repo docs. */
+  useEffect(() => {
+    if (settings.theme !== 'system') return;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    setSystemDark(media.matches);
+    const update = () => setSystemDark(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [settings.theme]);
+
+  useEffect(() => {
+    setStorageError(!savePreferences(settings, options));
+  }, [settings, options]);
+
+  /** Every explicit open appends/deduplicates; the last request owns preview focus. */
   const loadDocuments = useCallback(async (file: string | null, viaViewer: boolean) => {
+    const request = ++openRequest.current;
+    const epoch = queueEpoch.current;
     const { items: initial, viewer } = await fetchInitialItems(file);
+    if (epoch !== queueEpoch.current) return;
     if (initial.length === 0) {
-      setStatusMessage('سندی برای باز شدن پیدا نشد.');
+      if (request === openRequest.current) setStatusMessage(file ? 'فایل باز نشد؛ وجود فایل و دسترسی به آن را بررسی کنید.' : 'برای شروع یک فایل Markdown باز کنید.');
       return;
     }
-    setItems(initial);
-    setSelectedIds(new Set([initial[0].id]));
-    if (viaViewer || viewer) {
-      setWorkspaceTab('preview');
-      setStatusMessage(`«${initial[0].name}» در حالت مشاهده‌گر باز شد.`);
+    const delivered = initial.filter(item => (removedRequests.current.get(documentKey(item.path)) ?? -1) < request);
+    if (!delivered.length) return;
+    const merged = appendItems(delivered, undefined, request === openRequest.current);
+    if ((viaViewer || viewer) && request === openRequest.current) {
+      setStatusMessage(merged.focused ? `«${initial[0].name}» در حالت مشاهده‌گر باز شد.` : `«${initial[0].name}» به صف افزوده شد.`);
     }
-  }, []);
+  }, [appendItems]);
 
   useEffect(() => {
     let cancelled = false;
-    resolveStartupFile()
-      .then(async (file) => {
+    resolveStartupFiles()
+      .then(async (files) => {
         if (cancelled) return;
-        // A second browser launch should not duplicate the work of the first one.
-        if (file && !isTauri() && (await handOffToRunningInstance(file))) {
-          setHandedOff(file);
-          return;
-        }
-        loadDocuments(file, !!file);
+        // The launcher/server broker handles OS handoffs without a timed browser probe.
+        if (files.length) files.forEach(file => loadDocuments(file, true));
+        else loadDocuments(null, false);
+        const url = new URL(window.location.href);
+        url.searchParams.delete('file');
+        window.history.replaceState(null, '', url);
       })
       .catch(() => loadDocuments(null, false));
     return () => {
@@ -154,6 +223,7 @@ export const App: React.FC = () => {
   /** Single instance: a second launch routes its file into this running window. */
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let disposed = false;
     const disposeBrowser = listenForHandoffs((path) => {
       loadDocuments(path, true);
       appendLog('info', `Open-with handoff: ${path}`);
@@ -162,16 +232,17 @@ export const App: React.FC = () => {
       loadDocuments(path, true);
       appendLog('info', `Open-with handoff: ${path}`);
     }).then((dispose) => {
-      if (unlisten === undefined) unlisten = dispose;
-      else dispose();
+      if (disposed) dispose();
+      else unlisten = dispose;
     });
     return () => {
+      disposed = true;
       disposeBrowser();
       unlisten?.();
     };
   }, [loadDocuments, appendLog]);
 
-  const selectedItem = items.find((it) => selectedIds.has(it.id)) || null;
+  const selectedItem = items.find((it) => it.id === activeItemId) || null;
 
   useEffect(() => {
     if (!selectedItem?.path) {
@@ -179,6 +250,7 @@ export const App: React.FC = () => {
       return;
     }
     let stale = false;
+    void editor.refreshClean(selectedItem.path).catch(error => appendLog('warn', `بازخوانی نسخهٔ دیسک انجام نشد: ${String(error)}`));
     readFileContent(selectedItem.path).then((res) => {
       if (stale) return;
       setMarkdownContent(res.value);
@@ -187,9 +259,9 @@ export const App: React.FC = () => {
     return () => {
       stale = true;
     };
-  }, [selectedItem?.path, appendLog]);
+  }, [selectedItem?.path, previewNonce, appendLog, editor.refreshClean]);
 
-  const handleToggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  const handleToggleTheme = () => changeSettings({ theme: theme === 'dark' ? 'light' : 'dark' });
 
   const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
@@ -216,43 +288,27 @@ export const App: React.FC = () => {
     setOptions((prev) => ({ ...prev, [key]: value }));
   };
 
-  /**
-   * Reactively update items queue when recursive option toggles.
-   */
-  const handleRecursiveToggle = async (newRecursive: boolean) => {
+  /** Folder recursion affects future imports; existing documents remain in the queue. */
+  const handleRecursiveToggle = (newRecursive: boolean) => {
     setOptions((prev) => ({ ...prev, recursive: newRecursive }));
-
-    if (activeFolder) {
-      const scan = await scanFolder(activeFolder, newRecursive);
-      if (scan.error) {
-        appendLog('error', `Folder scan failed: ${scan.error}`);
-        setStatusMessage('پیمایش پوشه انجام نشد؛ جزئیات در کنسول.');
-        return;
-      }
-      const newItems: QueueItem[] = scan.value.map((f, idx) => ({
-        id: `scanned-${Date.now()}-${idx}`,
-        name: f.name,
-        path: f.path,
-        sizeBytes: f.sizeBytes,
-        sizeStr: `${(f.sizeBytes / 1024).toFixed(1)} KB`,
-        status: 'pending',
-        relativePath: f.relativePath,
-      }));
-      setItems(newItems);
-      if (newItems.length > 0) setSelectedIds(new Set([newItems[0].id]));
-      setStatusMessage(
-        newRecursive
-          ? `پیمایش بازگشتی فعال شد: ${newItems.length} سند در صف (شامل زیرپوشه‌ها)`
-          : `پیمایش زیرپوشه‌ها غیرفعال شد: ${newItems.length} سند در صف (فقط پوشه اصلی)`
-      );
-    } else if (!newRecursive) {
-      setItems((prev) =>
-        prev.filter((it) => !it.relativePath || !it.relativePath.includes('/'))
-      );
-    }
+    setStatusMessage(newRecursive ? 'پوشه‌های بعدی همراه زیرپوشه‌ها افزوده می‌شوند.' : 'از پوشه‌های بعدی فقط فایل‌های سطح اول افزوده می‌شوند.');
   };
 
-  const handleSelectItem = (id: string, e: React.MouseEvent) => {
+  const handleSelectItem = (id: string, e: { ctrlKey: boolean; metaKey: boolean; shiftKey?: boolean }) => {
+    activeItemRef.current = id;
+    setActiveItemId(id);
+    setWorkspaceTab('preview');
+    if (e.shiftKey && selectionAnchor.current) {
+      const visible = items.filter(item => !query.trim() || `${item.name} ${item.relativePath || ''}`.toLowerCase().includes(query.trim().toLowerCase()));
+      const anchor = visible.findIndex(item => item.id === selectionAnchor.current);
+      const target = visible.findIndex(item => item.id === id);
+      if (anchor >= 0 && target >= 0) {
+        const range = visible.slice(Math.min(anchor, target), Math.max(anchor, target) + 1).map(item => item.id);
+        setSelectedIds(new Set(e.ctrlKey || e.metaKey ? [...selectedIds, ...range] : range));
+        return;
+      }
+    }
+    selectionAnchor.current = id;
     if (e.ctrlKey || e.metaKey) {
       const next = new Set(selectedIds);
       if (next.has(id)) next.delete(id);
@@ -263,13 +319,13 @@ export const App: React.FC = () => {
     }
   };
 
-  const appendItems = (newItems: QueueItem[], message: string) => {
-    setItems((prev) => [...prev, ...newItems]);
-    if (newItems.length > 0) setSelectedIds(new Set([newItems[newItems.length - 1].id]));
-    setStatusMessage(message);
-  };
-
   const handleAddFiles = (files: FileList | File[]) => {
+    // Browser File objects do not expose original disk paths. Use the native picker
+    // instead of fabricating a relative path that opens the wrong or missing file.
+    if (Array.from(files).some(file => !(file as File & { path?: string }).path)) {
+      void handlePickFilesNative();
+      return;
+    }
     const newItems: QueueItem[] = Array.from(files).map((file, idx) => ({
       id: `file-${Date.now()}-${idx}`,
       name: file.name,
@@ -360,9 +416,8 @@ export const App: React.FC = () => {
         setStatusMessage('پوشه انتخاب شد اما فایل مارک‌داونی در آن یافت نشد.');
         return;
       }
-      setItems(newItems);
-      setSelectedIds(new Set([newItems[0].id]));
-      setStatusMessage(`${newItems.length} سند مارک‌داون از پوشه بارگذاری شد.`);
+      const merged = appendItems(newItems);
+      setStatusMessage(`${merged.added} سند جدید از پوشه به صف افزوده شد.`);
     } catch (err: any) {
       appendLog('error', `Folder picker error: ${err.message || String(err)}`);
       setStatusMessage('خطایی در انتخاب پوشه رخ داد.');
@@ -397,7 +452,7 @@ export const App: React.FC = () => {
   };
 
   const handleOpenOutputDir = async () => {
-    let target = options.outputDir || activeFolder || selectedItem?.path || '';
+    let target = options.outputDir || selectedItem?.path || activeFolder || '';
     if (!target) {
       setStatusMessage('پوشه‌ای برای باز کردن وجود ندارد؛ ابتدا یک سند یا پوشه انتخاب کنید.');
       return;
@@ -476,28 +531,65 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleRemoveSelected = () => {
-    setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
+  const removeDocumentsNow = (ids: Set<string>) => {
+    if (isRunning) return;
+    for (const item of itemsRef.current) if (ids.has(item.id)) removedRequests.current.set(documentKey(item.path), openRequest.current);
+    const next = removeQueueItems(itemsRef.current, ids, activeItemRef.current);
+    itemsRef.current = next.items;
+    setItems(next.items);
+    activeItemRef.current = next.activeId;
+    setActiveItemId(next.activeId);
+    setSelectedIds(new Set(next.activeId ? [next.activeId] : []));
+    setStatusMessage(`${ids.size} سند از صف حذف شد.`);
+  };
+  const removeDocuments = (ids: Set<string>) => {
+    if (isRunning) return;
+    const paths = itemsRef.current.filter(item => ids.has(item.id)).map(item => item.path);
+    guardEdits(paths, () => { editor.forget(paths); removeDocumentsNow(ids); });
+  };
+  const handleRemoveSelected = () => removeDocuments(selectedIds);
+
+  const clearQueue = () => {
+    if (isRunning) return;
+    queueEpoch.current++;
+    removedRequests.current.clear();
+    selectionAnchor.current = null;
+    openRequest.current++;
+    itemsRef.current = [];
+    setItems([]);
     setSelectedIds(new Set());
+    activeItemRef.current = null;
+    setActiveItemId(null);
+    setQuery('');
+    setActiveFolder(null);
+    setStatusMessage('صف پاک شد.');
   };
 
   const handleClearAll = () => {
-    setItems([]);
-    setSelectedIds(new Set());
-    setActiveFolder(null);
-    setStatusMessage('صف پاک شد.');
+    if (isRunning) return;
+    const paths = itemsRef.current.map(item => item.path);
+    if (paths.some(path => editor.ref.current[documentKey(path)]?.saving)) {
+      setStatusMessage('ذخیره در حال انجام است؛ چند لحظه صبر کنید.'); return;
+    }
+    if (paths.some(path => draftIsDirty(editor.ref.current[documentKey(path)]))) {
+      guardEdits(paths, () => { editor.forget(paths); clearQueue(); });
+    } else if (settings.confirmClearQueue && itemsRef.current.length) setConfirmClear(true);
+    else { editor.forget(paths); clearQueue(); }
   };
 
   const handleClearLogs = () => setLogs([]);
 
   const handleConvert = async () => {
     if (items.length === 0 || isRunning) return;
+    if (items.some(item => draftIsDirty(editor.ref.current[documentKey(item.path)]))) {
+      guardEdits(items.map(item => item.path), () => { void handleConvert(); }, false); return;
+    }
     setIsRunning(true);
     setProgressPercent(0);
     setCompletedCount(0);
     setStatusMessage(`درحال تبدیل ${items.length} سند با موتور MdPersia...`);
 
-    setItems((prev) => prev.map((it) => ({ ...it, status: 'pending', error: undefined })));
+    updateQueue((prev) => prev.map((it) => ({ ...it, status: 'pending', error: undefined })));
 
     await executeConversion(
       items,
@@ -509,43 +601,45 @@ export const App: React.FC = () => {
           setCompletedCount(comp);
           setProgressPercent(Math.round((comp / tot) * 100));
           if (evt.file) {
-            setItems((prev) =>
-              prev.map((it) => (it.name === evt.file ? { ...it, status: 'running' } : it))
+            updateQueue((prev) =>
+              prev.map((it) => (it.id === evt.itemId ? { ...it, status: 'running' } : it))
             );
           }
         } else if (evt.type === 'success') {
           if (evt.file) {
-            setItems((prev) =>
-              prev.map((it) => (it.name === evt.file ? { ...it, status: 'success' } : it))
+            updateQueue((prev) =>
+              prev.map((it) => (it.id === evt.itemId ? { ...it, status: 'success' } : it))
             );
           }
         } else if (evt.type === 'error') {
           if (evt.file) {
-            setItems((prev) =>
+            updateQueue((prev) =>
               prev.map((it) =>
-                it.name === evt.file ? { ...it, status: 'error', error: evt.error } : it
+                it.id === evt.itemId ? { ...it, status: 'error', error: evt.error } : it
               )
             );
           }
         } else if (evt.type === 'done') {
           setProgressPercent(100);
+          setCompletedCount(evt.completed ?? 0);
           const succ = evt.completed ?? 0;
           const tot = evt.total ?? items.length;
           setStatusMessage(`فرآیند تبدیل پایان یافت: ${succ} موفق، ${tot - succ} ناموفق.`);
         } else if (evt.type === 'cancelled') {
+          updateQueue(prev => prev.map(item => item.status === 'running' ? { ...item, status: 'pending' } : item));
           setStatusMessage('عملیات تبدیل توسط کاربر لغو گردید.');
         }
       },
-      (log: LogEntry) => setLogs((prev) => [...prev, log])
+      (log: LogEntry) => setLogs((prev) => [...prev.slice(-999), log])
     );
 
     setIsRunning(false);
   };
 
-  const handleCancel = () => {
-    cancelActiveConversion();
-    setIsRunning(false);
-    setStatusMessage('توقف درخواست شد.');
+  const handleCancel = async () => {
+    setStatusMessage('در حال توقف تبدیل…');
+    try { await cancelActiveConversion(); }
+    catch (error) { setStatusMessage(String(error)); }
   };
 
   const revealInExplorer = async (targetPath: string) => {
@@ -565,27 +659,86 @@ export const App: React.FC = () => {
     await revealInExplorer(folder);
   };
 
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (settingsOpen || confirmClear || pendingEdits || document.querySelector('dialog[open]')) return;
+      const editing = event.target instanceof HTMLElement &&
+        (event.target.matches('input, textarea, select') || event.target.isContentEditable);
+      if ((event.ctrlKey || event.metaKey) && event.code === 'Comma') {
+        event.preventDefault(); setSettingsOpen(true);
+      } else if ((event.ctrlKey || event.metaKey) && (event.code === 'KeyO' || event.key.toLowerCase() === 'o')) {
+        event.preventDefault(); handlePickFilesNative();
+      } else if (event.key === 'F5' || ((event.ctrlKey || event.metaKey) && (event.code === 'KeyR' || event.key.toLowerCase() === 'r'))) {
+        event.preventDefault(); setPreviewNonce(nonce => nonce + 1);
+      } else if (!editing && event.key === 'Delete') {
+        event.preventDefault(); handleRemoveSelected();
+      } else if (!editing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'w' && activeItemId && !isRunning) {
+        event.preventDefault();
+        removeDocuments(new Set([activeItemId]));
+      }
+    };
+    window.addEventListener('keydown', shortcut);
+    return () => window.removeEventListener('keydown', shortcut);
+  }, [activeItemId, selectedIds, isRunning, nativeBusy, settingsOpen, confirmClear, pendingEdits]);
+
+  const closeGuard = useRef(guardEdits); closeGuard.current = guardEdits;
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false; let unlisten: (() => void) | undefined;
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const window = getCurrentWindow();
+      const stop = await window.onCloseRequested(event => {
+        const paths = Object.values(editor.ref.current).filter(draft => draftIsDirty(draft) || draft.saving).map(draft => draft.path);
+        if (!paths.length) return;
+        event.preventDefault();
+        closeGuard.current(paths, () => { unlisten?.(); void window.close(); });
+      });
+      if (disposed) stop(); else unlisten = stop;
+    });
+    return () => { disposed = true; unlisten?.(); };
+  }, [editor.ref]);
+
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-app text-main transition-colors duration-200">
-      <Header theme={theme} onToggleTheme={handleToggleTheme} isBusy={!!nativeBusy || isRunning} />
+      <Header theme={theme} onToggleTheme={handleToggleTheme} onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} isBusy={!!nativeBusy || isRunning} />
 
-      {handedOff && (
-        <div className="shrink-0 flex items-center justify-between gap-3 px-4 h-10 text-xs bg-blue-500/10 border-b border-blue-500/30 text-blue-700 dark:text-blue-300">
-          <span className="truncate min-w-0">
-            «{handedOff.split(/[\\/]/).pop()}» در پنجره‌ای که از قبل باز بود نمایش داده شد.
-          </span>
-          <button
-            type="button"
-            className="btn px-2 py-1 rounded hover:bg-blue-500/15 shrink-0"
-            onClick={() => {
-              loadDocuments(handedOff, true);
-              setHandedOff(null);
-            }}
-          >
-            باز کردن در همین تب
-          </button>
-        </div>
-      )}
+      {pendingEdits && <AppDialog title="تغییرات ذخیره‌نشده" description={pendingEdits.allowDiscard ? 'پیش از کنارگذاشتن اسناد، تغییرات را ذخیره کنید.' : 'برای تبدیل، ابتدا تغییرات اسناد باید روی دیسک ذخیره شوند.'}
+        onClose={() => { if (!savingEdits) setPendingEdits(null); }}
+        footer={<>
+          <button type="button" disabled={savingEdits} className="btn px-3 py-2 rounded border border-subtle hover:bg-subtle text-sm" onClick={() => setPendingEdits(null)}>انصراف</button>
+          {pendingEdits.allowDiscard && <button type="button" disabled={savingEdits} className="btn px-3 py-2 rounded text-red-600 dark:text-red-400 hover:bg-subtle text-sm" onClick={() => { editor.forget(pendingEdits.paths); pendingEdits.next(); setPendingEdits(null); }}>کنارگذاشتن تغییرات</button>}
+          <button type="button" disabled={savingEdits} className="btn px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm" onClick={async () => {
+            setSavingEdits(true); setPendingError('');
+            try {
+              for (const path of pendingEdits.paths) { if (!await editor.save(path)) { setPendingError('ذخیره کامل نشد؛ خطای سند را بررسی کنید. پیش‌نویس‌ها حفظ شدند.'); return; } }
+              pendingEdits.next(); setPendingEdits(null);
+            } finally { setSavingEdits(false); }
+          }}>{savingEdits ? 'در حال ذخیره…' : 'ذخیره و ادامه'}</button>
+        </>}>
+        <ul className="text-sm text-muted space-y-2">{pendingEdits.paths.map(path => <li key={path} dir="auto" className="break-all">{path.split(/[\\/]/).pop()}</li>)}</ul>
+        {pendingError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400 mt-3 leading-6">{pendingError}</p>}
+      </AppDialog>}
+
+      {settingsOpen && <Suspense fallback={null}>
+        <SettingsDialog settings={settings} format={options.format} isRunning={isRunning} storageError={storageError} notice={settingsNotice}
+          onChange={changeSettings} onFormatChange={format => { handleOptionChange('format', format); setSettingsNotice(''); }} onClose={() => setSettingsOpen(false)}
+          onResetLayout={() => {
+            setQueueWidth(queueDefault()); setInspectorWidth(inspectorDefault());
+            storeWidth('pane_queue_width_v2', queueDefault()); storeWidth('pane_inspector_width', inspectorDefault());
+            setSettingsNotice('عرض پنل‌ها به حالت اولیه برگشت.');
+          }}
+          onReset={() => {
+            setSettings({ ...DEFAULT_APP_SETTINGS }); setOptions({ ...DEFAULT_CONVERT_OPTIONS });
+            setSettingsNotice('تنظیمات پیش‌فرض اعمال شد؛ اسناد صف حفظ شدند.');
+          }} />
+      </Suspense>}
+      {confirmClear && <AppDialog title="پاک‌کردن صف" description="همهٔ اسناد از صف کنار گذاشته می‌شوند؛ فایل‌های روی دیسک حفظ می‌شوند." onClose={() => setConfirmClear(false)}
+        footer={<>
+          <button type="button" onClick={() => setConfirmClear(false)} className="btn px-4 py-2 rounded-md border border-subtle hover:bg-subtle text-sm">انصراف</button>
+          <button type="button" onClick={() => { editor.forget(itemsRef.current.map(item => item.path)); clearQueue(); setConfirmClear(false); }} className="btn px-4 py-2 rounded-md bg-red-600 hover:bg-red-700 text-white text-sm">پاک‌کردن همهٔ صف</button>
+        </>}>
+        <p className="text-sm text-muted">{items.length} سند در صف قرار دارد.</p>
+      </AppDialog>}
 
       <main className="flex-1 flex overflow-hidden relative">
         {/* Zone A: Document Batch Queue (Right-most in RTL) */}
@@ -594,12 +747,13 @@ export const App: React.FC = () => {
           className="h-full shrink-0 overflow-hidden"
         >
           <QueuePanel
-            items={items}
+            items={items.map(item => item.unsaved === draftIsDirty(editor.drafts[documentKey(item.path)]) ? item : { ...item, unsaved: draftIsDirty(editor.drafts[documentKey(item.path)]) })}
             selectedIds={selectedIds}
             recursive={options.recursive}
             query={query}
             onQueryChange={setQuery}
             nativeBusy={nativeBusy}
+            isConverting={isRunning}
             onRecursiveChange={handleRecursiveToggle}
             onSelect={handleSelectItem}
             onAddFiles={handleAddFiles}
@@ -630,6 +784,7 @@ export const App: React.FC = () => {
           <InspectorPanel
             options={options}
             isRunning={isRunning}
+            hasDocuments={items.length > 0}
             outputDirBusy={nativeBusy === 'output-dir'}
             onOptionsChange={(key, value) => {
               if (key === 'recursive') handleRecursiveToggle(Boolean(value));
@@ -665,12 +820,19 @@ export const App: React.FC = () => {
             activeTab={workspaceTab}
             onTabChange={setWorkspaceTab}
             zoom={zoom}
-            onZoomChange={setZoom}
+            onZoomChange={previewZoom => changeSettings({ previewZoom })}
+            readingSettings={settings}
+            editor={editor}
+            onSavedCopy={document => {
+              const name = document.path.split(/[\\/]/).pop() || document.path;
+              appendItems([{ id: '', path: document.path, name, sizeBytes: document.sizeBytes, sizeStr: `${(document.sizeBytes / 1024).toFixed(1)} KB`, status: 'pending' }], 'نسخهٔ جدید ذخیره شد.', true, true);
+            }}
             previewNonce={previewNonce}
             onRefreshPreview={() => setPreviewNonce((n) => n + 1)}
             onClearLogs={handleClearLogs}
             onOpenOutputDir={handleOpenOutputDir}
             onOpenInEditor={revealInExplorer}
+            onOpenDocument={(path) => loadDocuments(path, true)}
           />
         </section>
       </main>

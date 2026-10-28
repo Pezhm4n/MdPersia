@@ -3,6 +3,9 @@ import { QueueItem, LogEntry } from '../types';
 import { PreviewTab } from './Workspace/PreviewTab';
 import { TerminalTab } from './Workspace/TerminalTab';
 import { Eye, Terminal } from 'lucide-react';
+import type { AppSettings } from '../services/appSettings';
+import type { DocumentEditor } from '../services/useDocumentEditor';
+import type { DocumentSnapshot } from '../services/documents';
 
 interface WorkspacePanelProps {
   selectedItem: QueueItem | null;
@@ -19,6 +22,10 @@ interface WorkspacePanelProps {
   onClearLogs: () => void;
   onOpenInEditor?: (path: string) => void;
   onOpenOutputDir?: () => void;
+  onOpenDocument?: (path: string) => void;
+  readingSettings: AppSettings;
+  editor: DocumentEditor;
+  onSavedCopy: (document: DocumentSnapshot) => void;
 }
 
 export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
@@ -36,12 +43,15 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
   onClearLogs,
   onOpenInEditor,
   onOpenOutputDir,
+  onOpenDocument,
+  readingSettings,
+  editor, onSavedCopy,
 }) => {
   // Surface live process output while a batch runs, then hand control back.
   useEffect(() => {
-    if (isRunning) onTabChange('terminal');
+    if (isRunning && readingSettings.showConversionLogs) onTabChange('terminal');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning]);
+  }, [isRunning, readingSettings.showConversionLogs, onTabChange]);
 
   const tabClass = (active: boolean) =>
     `btn relative shrink-0 px-4 py-3 text-xs font-medium transition-colors duration-150 ${
@@ -84,9 +94,10 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'terminal' ? (
+        {activeTab === 'terminal' && (
           <TerminalTab logs={logs} onClearLogs={onClearLogs} onOpenOutputDir={onOpenOutputDir} />
-        ) : (
+        )}
+        <div className={activeTab === 'preview' ? 'h-full' : 'hidden'}>
           <PreviewTab
             selectedItem={selectedItem}
             markdownContent={markdownContent}
@@ -96,8 +107,11 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
             previewNonce={previewNonce}
             onRefresh={onRefreshPreview}
             onOpenInEditor={onOpenInEditor}
+            onOpenDocument={onOpenDocument}
+            readingSettings={readingSettings}
+            editor={editor} isRunning={isRunning} onSavedCopy={onSavedCopy}
           />
-        )}
+        </div>
       </div>
     </div>
   );

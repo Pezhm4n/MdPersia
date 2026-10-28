@@ -1,11 +1,14 @@
 import { QueueItem, ConvertOptions, LogEntry, ProgressEvent } from '../types';
 import { buildCliArgs } from './cliTranslator';
+import { DEFAULT_APP_SETTINGS, type ReadingSettings } from './appSettings';
 
 export const isTauri = (): boolean => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 };
 
 let activeCancellation = false;
+let cancelCurrentJob: (() => Promise<void>) | null = null;
+const windowSession = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 const getTimestamp = (): string => new Date().toLocaleTimeString();
 
@@ -22,11 +25,18 @@ async function executeWebConversionJob(
   args: string[],
   onLog: (entry: LogEntry) => void
 ): Promise<number> {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const response = await fetch('/api/convert-job', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ args }),
+    body: JSON.stringify({ args, id, windowSession }),
   });
+  if (!response.ok) throw new Error(`Conversion request failed: HTTP ${response.status}`);
+  cancelCurrentJob = async () => {
+    const stopped = await fetch('/api/cancel-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+    if (!stopped.ok) throw new Error('توقف تبدیل انجام نشد؛ دوباره تلاش کنید.');
+  };
+  if (activeCancellation) await cancelCurrentJob();
 
   if (!response.body) {
     throw new Error('ReadableStream not supported');
@@ -34,7 +44,7 @@ async function executeWebConversionJob(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder('utf-8');
-  let exitCode = 0;
+  let exitCode: number | null = null;
   let buffer = '';
 
   while (true) {
@@ -65,7 +75,7 @@ async function executeWebConversionJob(
             message: payload.text.trimEnd(),
           });
         } else if (payload.type === 'exit') {
-          exitCode = payload.code ?? 0;
+          exitCode = typeof payload.code === 'number' ? payload.code : 1;
         } else if (payload.type === 'error') {
           onLog({
             id: `err-${Date.now()}`,
@@ -81,6 +91,7 @@ async function executeWebConversionJob(
     }
   }
 
+  if (exitCode === null) throw new Error('ارتباط با موتور پیش از دریافت نتیجهٔ تبدیل قطع شد.');
   return exitCode;
 }
 
@@ -122,6 +133,7 @@ export async function executeConversion(
     onProgress({
       type: 'progress',
       file: item.name,
+      itemId: item.id,
       total: items.length,
       completed: i,
     });
@@ -158,16 +170,19 @@ export async function executeConversion(
         });
 
         const output = await cmd.execute();
-        code = output.code ?? 0;
+        code = output.code ?? 1;
       } else {
         code = await executeWebConversionJob(args, onLog);
       }
 
+      cancelCurrentJob = null;
+      if (activeCancellation) { onProgress({ type: 'cancelled' }); return; }
       if (code === 0) {
         successCount++;
         onProgress({
           type: 'success',
           file: item.name,
+          itemId: item.id,
           destPath: item.path,
         });
         onLog({
@@ -181,6 +196,7 @@ export async function executeConversion(
         onProgress({
           type: 'error',
           file: item.name,
+          itemId: item.id,
           error: `Process exited with error code ${code}`,
         });
         onLog({
@@ -191,10 +207,12 @@ export async function executeConversion(
         });
       }
     } catch (err: any) {
+      cancelCurrentJob = null;
       failCount++;
       onProgress({
         type: 'error',
         file: item.name,
+        itemId: item.id,
         error: err.message || String(err),
       });
       onLog({
@@ -206,6 +224,7 @@ export async function executeConversion(
     }
   }
 
+  if (activeCancellation) { onProgress({ type: 'cancelled' }); return; }
   onProgress({
     type: 'done',
     total: items.length,
@@ -220,8 +239,9 @@ export async function executeConversion(
   });
 }
 
-export function cancelActiveConversion(): void {
+export async function cancelActiveConversion(): Promise<void> {
   activeCancellation = true;
+  if (cancelCurrentJob) await cancelCurrentJob();
 }
 
 export interface PickedFile {
@@ -257,18 +277,22 @@ const MARKDOWN = /\.(md|markdown)$/i;
  * Markdown file handed to the process on launch (double-click / `mdpersia --gui file.md`).
  * In the dev/web build the launcher passes it as `?file=`.
  */
-export async function resolveStartupFile(): Promise<string | null> {
-  const fromQuery = new URLSearchParams(window.location.search).get('file');
-  if (fromQuery && MARKDOWN.test(fromQuery)) return fromQuery;
+export async function resolveStartupFiles(): Promise<string[]> {
+  const fromQuery = new URLSearchParams(window.location.search).getAll('file').filter(path => MARKDOWN.test(path));
+  if (fromQuery.length) return fromQuery;
 
-  if (!isTauri()) return null;
+  if (!isTauri()) return [];
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     const args: string[] = await invoke('startup_arguments');
-    return args.find((a) => MARKDOWN.test(a)) ?? null;
+    return args.filter((a) => MARKDOWN.test(a));
   } catch {
-    return null;
+    return [];
   }
+}
+
+export async function resolveStartupFile(): Promise<string | null> {
+  return (await resolveStartupFiles())[0] ?? null;
 }
 
 /**
@@ -277,12 +301,20 @@ export async function resolveStartupFile(): Promise<string | null> {
 export async function onOpenFileRequested(
   handler: (path: string) => void
 ): Promise<() => void> {
-  if (!isTauri()) return () => {};
+  if (!isTauri()) {
+    const events = new EventSource(`/api/open-files?window=${encodeURIComponent(windowSession)}`);
+    events.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        if (typeof payload.path === 'string' && MARKDOWN.test(payload.path)) handler(payload.path);
+      } catch { /* Ignore incomplete events during reconnect. */ }
+    };
+    return () => events.close();
+  }
   try {
     const { listen } = await import('@tauri-apps/api/event');
     const unlisten = await listen<string[]>('open-files', (evt) => {
-      const first = (evt.payload || []).find((p) => MARKDOWN.test(p));
-      if (first) handler(first);
+      for (const path of evt.payload || []) if (MARKDOWN.test(path)) handler(path);
     });
     return unlisten;
   } catch {
@@ -508,7 +540,7 @@ async function queueItemFromPath(filePath: string): Promise<QueueItem> {
   }
   const name = filePath.replace(/^.*[\\/]/, '');
   return {
-    id: 'open-0',
+    id: `document:${filePath}`,
     name,
     path: filePath.replace(/\\/g, '/'),
     sizeBytes,
@@ -526,31 +558,47 @@ const VAZIRMATN_WEIGHTS: Record<string, number> = {
 };
 
 /** Viewer chrome shared by both runtimes; assets resolve against the app origin. */
-function viewerShellCss(zoom: number, theme: string): string {
+function viewerShellCss(zoom: number, theme: string, reading: ReadingSettings = DEFAULT_APP_SETTINGS): string {
   const faces = Object.entries(VAZIRMATN_WEIGHTS)
     .map(
       ([name, weight]) =>
-        `@font-face { font-family: "Vazirmatn"; src: url("/fonts/Vazirmatn-${name}.ttf") format("truetype"); font-weight: ${weight}; font-style: normal; font-display: swap; }`
+        `@font-face { font-family: "Vazirmatn"; src: url("${window.location.origin}/fonts/Vazirmatn-${name}.ttf") format("truetype"); font-weight: ${weight}; font-style: normal; font-display: swap; }`
     )
     .join('\n');
   const dark =
     theme === 'dark'
       ? `body, .markdown-body { background-color: #121214 !important; color: #e4e4e7 !important; }
-         h1,h2,h3,h4,h5,h6 { color: #fafafa !important; }
+         h1,h2,h3,h4,h5,h6 { color: #fafafa !important; border-bottom-color: #27272a !important; }
          code { background: #27272a !important; color: #f43f5e !important; }
-         pre { background: #18181b !important; }
-         table th { background: #1f1f23 !important; color: #f4f4f5 !important; }
-         table td { background: #121214 !important; color: #e4e4e7 !important; }
+         pre { background: #18181b !important; border-color: #27272a !important; }
+         table th { background: #1f1f23 !important; color: #f4f4f5 !important; border-color: #27272a !important; }
+         table td { background: #121214 !important; color: #e4e4e7 !important; border-color: #27272a !important; }
          blockquote { background: #1e1e24 !important; color: #d4d4d8 !important; }
          .mermaid { filter: invert(0.88) hue-rotate(180deg); }`
       : '';
   return `<style>${faces}
     html { zoom: ${zoom}%; }
     html, body { margin: 0; padding: 0; }
-    .markdown-body { padding: 36px 44px !important; max-width: 860px !important;
+    .markdown-body { padding: 36px 44px !important; max-width: ${reading.readingWidth === 'wide' ? 'none' : '860px'} !important;
+      line-height: ${reading.lineHeight} !important;
       margin: 0 auto !important; box-sizing: border-box !important; min-height: 100vh; }
+    .markdown-body p, .markdown-body li { line-height: inherit !important; }
+    .markdown-body pre { white-space: ${reading.wrapCode ? 'pre-wrap' : 'pre'} !important;
+      overflow-wrap: ${reading.wrapCode ? 'anywhere' : 'normal'} !important; overflow-x: auto !important; }
+    .markdown-body pre code { white-space: inherit !important; overflow-wrap: inherit !important; }
     img { max-width: 100%; height: auto; }
     ${dark}</style>`;
+}
+
+/** Theme and zoom change the current iframe; no Python process or Mermaid reload. */
+export function applyPreviewAppearance(doc: Document, theme: 'dark' | 'light', zoom: number, reading?: ReadingSettings): void {
+  let style = doc.getElementById('mdpersia-appearance');
+  if (!style) {
+    style = doc.createElement('style');
+    style.id = 'mdpersia-appearance';
+    doc.head.append(style);
+  }
+  style.textContent = viewerShellCss(zoom, theme, reading).replace(/^<style>|<\/style>$/g, '');
 }
 
 export type PreviewSource =
@@ -586,6 +634,30 @@ export async function loadPreviewDocument(
     return { kind: 'document', html: mapped.replace('</head>', `${viewerShellCss(pct, theme)}</head>`) };
   } catch (err: any) {
     return { kind: 'error', message: err?.message || String(err) };
+  }
+}
+
+/** Render the in-memory draft with the same Python Markdown/BiDi engine, without writing it. */
+export async function loadDraftPreview(path: string, text: string, signal?: AbortSignal): Promise<PreviewSource> {
+  try {
+    if (!isTauri()) {
+      const response = await fetch('/api/preview-draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path, text }), signal });
+      const result = await response.json();
+      if (!response.ok || typeof result.html !== 'string') throw new Error(result.error || 'پیش‌نمایش پیش‌نویس ساخته نشد.');
+      return { kind: 'document', html: result.html };
+    }
+    const { invoke, convertFileSrc } = await import('@tauri-apps/api/core');
+    const { html } = await invoke<{ html: string }>('preview_html', { request: { path, text, theme: 'light', zoom: 100 } });
+    return { kind: 'document', html: html.replace(/file:\/\/([^"')\s]+)/g, (_match, raw: string) => {
+      const p = decodeURIComponent(raw).replace(/^\/([A-Za-z]:)/, '$1');
+      const name = p.split(/[\\/]/).pop() || '';
+      if (/\.ttf$/i.test(name)) return `/fonts/${name}`;
+      if (/mermaid.*\.js$/i.test(name)) return `/vendor/${name}`;
+      return convertFileSrc(p);
+    }) };
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return { kind: 'error', message: error instanceof Error ? error.message : String(error) };
   }
 }
 

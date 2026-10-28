@@ -30,9 +30,10 @@ interface QueuePanelProps {
   recursive: boolean;
   query: string;
   nativeBusy: 'files' | 'folder' | 'output-dir' | 'explorer' | null;
+  isConverting?: boolean;
   onQueryChange: (value: string) => void;
   onRecursiveChange: (value: boolean) => void;
-  onSelect: (id: string, e: React.MouseEvent) => void;
+  onSelect: (id: string, e: { ctrlKey: boolean; metaKey: boolean }) => void;
   onAddFiles: (files: FileList | File[]) => void;
   onPickFilesNative?: () => void;
   onAddFolder?: () => void;
@@ -48,6 +49,7 @@ export const QueuePanel: React.FC<QueuePanelProps> = ({
   recursive,
   query,
   nativeBusy,
+  isConverting = false,
   onQueryChange,
   onRecursiveChange,
   onSelect,
@@ -208,7 +210,23 @@ export const QueuePanel: React.FC<QueuePanelProps> = ({
       </div>
 
       {/* Main Table / Drop Area */}
-      <div className="flex-1 overflow-x-auto overflow-y-auto relative">
+      <div className="flex-1 overflow-x-auto overflow-y-auto relative" onKeyDown={(event) => {
+        const row = (event.target as HTMLElement).closest<HTMLElement>('[data-document-id]');
+        if (!row) return;
+        const index = filtered.findIndex(item => item.id === row.dataset.documentId);
+        let next = index;
+        if (event.key === 'ArrowDown') next = Math.min(filtered.length - 1, index + 1);
+        else if (event.key === 'ArrowUp') next = Math.max(0, index - 1);
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = filtered.length - 1;
+        else if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        const item = filtered[next];
+        if (!item) return;
+        onSelect(item.id, event);
+        const rows = event.currentTarget.querySelectorAll<HTMLElement>('[data-document-id]');
+        [...rows].find(element => element.dataset.documentId === item.id)?.focus();
+      }}>
         {items.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center p-6 text-center text-muted">
             <div className="w-12 h-12 rounded-xl bg-subtle flex items-center justify-center mb-3 text-muted">
@@ -285,7 +303,7 @@ export const QueuePanel: React.FC<QueuePanelProps> = ({
               className="rounded border-input bg-input text-blue-600 shrink-0"
             />
             <FolderTree className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-            <span className="font-medium whitespace-nowrap truncate">پیمایش بازگشتی زیرپوشه‌ها</span>
+            <span className="font-medium whitespace-nowrap truncate" title="این گزینه هنگام افزودن پوشه اعمال می‌شود و فایل‌های موجود صف را حذف نمی‌کند.">افزودن زیرپوشه‌ها</span>
           </label>
           <span className="text-[11px] text-muted font-mono whitespace-nowrap shrink-0">
             {recursive ? 'Recursive' : 'Top-only'}
@@ -325,7 +343,7 @@ export const QueuePanel: React.FC<QueuePanelProps> = ({
         <div className="grid grid-cols-2 gap-1.5">
           <button
             onClick={onRemoveSelected}
-            disabled={selectedIds.size === 0 || pickerPending}
+            disabled={selectedIds.size === 0 || pickerPending || isConverting}
             className="btn px-2 py-1.5 rounded text-xs bg-subtle hover:bg-rose-500/15 text-muted hover:text-rose-600 dark:hover:text-rose-400"
             title="حذف فایل‌های انتخاب شده از صف"
           >
@@ -335,7 +353,7 @@ export const QueuePanel: React.FC<QueuePanelProps> = ({
 
           <button
             onClick={onClearAll}
-            disabled={items.length === 0 || pickerPending}
+            disabled={items.length === 0 || pickerPending || isConverting}
             className="btn px-2 py-1.5 rounded text-xs bg-subtle hover:bg-hover text-muted hover:text-main"
             title="پاکسازی کامل صف"
           >

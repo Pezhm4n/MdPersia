@@ -10,7 +10,7 @@ interface QueueItemRowProps {
   columnWidths?: Record<ColumnKey, number>;
   /** Last visible column stretches to the panel width so the table never scrolls sideways. */
   fillColumn?: ColumnKey;
-  onSelect: (id: string, e: React.MouseEvent) => void;
+  onSelect: (id: string, e: { ctrlKey: boolean; metaKey: boolean }) => void;
   onContextMenu: (e: React.MouseEvent, item: QueueItem) => void;
 }
 
@@ -66,10 +66,12 @@ export const QueueItemRow: React.FC<QueueItemRowProps> = ({
 
   return (
     <tr
+      tabIndex={0}
+      data-document-id={item.id}
       onClick={(e) => onSelect(item.id, e)}
       onContextMenu={(e) => onContextMenu(e, item)}
       aria-selected={isSelected}
-      className={`border-b border-main cursor-pointer select-none transition-colors duration-150 ${
+      className={`border-b border-main cursor-pointer select-none transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-blue-500 focus-visible:-outline-offset-2 ${
         isSelected
           ? 'bg-blue-600/15 text-blue-700 dark:text-blue-200'
           : 'hover:bg-subtle text-main'
@@ -86,6 +88,7 @@ export const QueueItemRow: React.FC<QueueItemRowProps> = ({
             <span className="font-mono text-xs truncate min-w-0" dir="ltr" title={item.path}>
               {item.name}
             </span>
+            {item.unsaved && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" role="img" aria-label="تغییرات ذخیره‌نشده" title="تغییرات ذخیره‌نشده" />}
           </div>
         </td>
       )}

@@ -106,6 +106,61 @@
 .bg-input { background-color: var(--input-bg); }
 .border-input { border-color: var(--input-border); }
 
+.editor-area-split { flex: 0 0 46%; min-height: 140px; }
+.editor-action-bar { container-type: inline-size; }
+.markdown-editor .cm-editor { text-align: start; }
+.markdown-editor .cm-scroller { overscroll-behavior: contain; }
+.markdown-editor .cm-search { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.markdown-editor .cm-search label { display: inline-flex; align-items: center; gap: 4px; }
+.markdown-editor .cm-button { background-image: none; }
+.markdown-editor .cm-content { min-height: 100%; }
+.editor-format-bar .tip { white-space: normal; }
+@media (prefers-reduced-motion: reduce) {
+  .markdown-editor * { scroll-behavior: auto !important; }
+}
+
+/* Settings use the same surfaces and typography as the workbench. */
+.app-dialog {
+  width: min(660px, calc(100vw - 24px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 70px rgb(0 0 0 / 0.28);
+}
+.app-dialog[open] { display: flex; flex-direction: column; }
+.app-dialog::backdrop { background: rgb(0 0 0 / 0.55); }
+.app-dialog-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.settings-section { padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border-main); }
+.settings-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-choice {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: 8px;
+  font-size: 12px; cursor: pointer; flex: 1 1 auto;
+}
+.settings-choice:hover { background: var(--bg-subtle); }
+.settings-choice:has(input:checked) { background: var(--bg-subtle); color: var(--text-main); border-color: currentColor; }
+.settings-choice:has(input:focus-visible) { outline: 2px solid currentColor; outline-offset: 2px; }
+.settings-choice input { accent-color: #2563eb; }
+.settings-choice:has(input:disabled) { cursor: not-allowed; }
+.settings-toggle { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 12px 0; cursor: pointer; }
+.settings-switch {
+  appearance: none; width: 36px; height: 22px; flex: 0 0 36px; border-radius: 20px;
+  background: var(--border-subtle); border: 1px solid var(--text-dim); cursor: pointer; position: relative;
+}
+.settings-switch::before {
+  content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  top: 3px; left: 3px; background: var(--text-main); transition: transform 120ms ease;
+}
+.settings-switch:checked { background: #2563eb; border-color: #2563eb; }
+.settings-switch:checked::before { background: white; transform: translateX(14px); }
+.settings-switch:disabled { cursor: not-allowed; }
+@media (prefers-reduced-motion: reduce) {
+  .settings-switch::before { transition: none; }
+}
+
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

@@ -13,6 +13,7 @@ export interface QueueItem {
   status: ItemStatus;
   relativePath?: string;
   error?: string;
+  unsaved?: boolean;
 }
 
 export interface ConvertOptions {
@@ -57,6 +58,7 @@ export interface ConvertOptions {
 export interface ProgressEvent {
   type: 'start' | 'progress' | 'success' | 'error' | 'done' | 'cancelled';
   file?: string;
+  itemId?: string;
   total?: number;
   completed?: number;
   error?: string;
