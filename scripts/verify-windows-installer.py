@@ -86,7 +86,7 @@ def main():
     output = args.output.resolve()
     if (root / 'output').resolve() not in output.parents:
         raise ValueError('Acceptance directory must be below the workspace output directory')
-    install = output / 'installed-MdPersia'
+    install = output / 'installed MdPersia'
     if install.exists():
         raise ValueError('Use a fresh acceptance directory')
     output.mkdir(parents=True, exist_ok=True)
@@ -97,7 +97,9 @@ def main():
     report = {'setup': str(setup), 'sha256': hashlib.sha256(setup.read_bytes()).hexdigest()}
     try:
         for attempt in range(2):
-            subprocess.run([str(setup), '/S', '/D='+str(install)], check=True, timeout=300)
+            # NSIS /D consumes the rest of the raw command line and must not be quoted.
+            command_line = subprocess.list2cmdline([str(setup), '/S']) + ' /D=' + str(install)
+            subprocess.run(command_line, check=True, timeout=300)
             assert (install / 'MdPersia.exe').is_file()
             manifest = json.loads((install / 'release-manifest.json').read_text())
             for path, expected in manifest['files'].items():

@@ -31,8 +31,13 @@ def main() -> None:
                               encoding='utf-8', capture_output=True, check=True, timeout=120)
     report = {'os': platform.platform(), 'restrictedPath': env['PATH'],
               'doctor': json.loads(run('--doctor').stdout)}
+    # Reproduce the exact resource path representation returned by Tauri on Windows.
+    assets = '\\\\?\\' + str(app / 'assets')
+    native_doctor = json.loads(run('--assets-dir', assets, '--doctor').stdout)
+    assert native_doctor['assets'] == str(app / 'assets')
+    report['tauriVerbatimResourcePathNormalized'] = True
     started = time.perf_counter()
-    worker = subprocess.Popen([str(engine), '--worker'], cwd=output, env=env,
+    worker = subprocess.Popen([str(engine), '--assets-dir', assets, '--worker'], cwd=output, env=env,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding='utf-8')
     try:
         def request(**body):
@@ -57,7 +62,7 @@ def main() -> None:
         worker.stdin.close()
         worker.wait(timeout=15)
     for kind in ('pdf', 'docx'):
-        result = run('--convert', str(source), '--format', kind, '--verbose')
+        result = run('--assets-dir', assets, '--convert', str(source), '--format', kind, '--verbose')
         (output / f'{kind}-conversion.log').write_text(result.stdout+result.stderr, encoding='utf-8')
         target = source.with_suffix('.'+kind)
         assert target.is_file() and target.stat().st_size > 1000

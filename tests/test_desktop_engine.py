@@ -20,6 +20,10 @@ def test_installed_assets_are_resolved_beside_engine_not_cwd(tmp_path, monkeypat
     monkeypatch.setattr(sys, 'executable', str(app / 'engine/mdpersia-engine.exe'))
     monkeypatch.chdir(tmp_path)
     assert desktop_engine.asset_root() == app / 'assets'
+    if sys.platform == 'win32':
+        resolved = desktop_engine.asset_root('\\\\?\\' + str(app / 'assets'))
+        assert resolved == app / 'assets'
+        assert resolved.as_uri().startswith('file:///')
 
 
 def test_missing_bundled_browser_fails_instead_of_using_system_install(tmp_path, monkeypatch):

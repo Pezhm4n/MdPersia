@@ -145,6 +145,7 @@ def main() -> None:
             assert first.read_bytes() == changed.replace('\n', '\r\n').encode('utf-8-sig')
             report['nativeLiveEditAndActualCtrlSSave'] = True
             content.click()
+            page.keyboard.press('Control+End')
             page.keyboard.insert_text('\nپیش‌نویس برای آزمون خروج\n')
             expect(page.get_by_role('img', name='تغییرات ذخیره‌نشده', exact=True)).to_have_count(1)
             page.evaluate('void window.__TAURI_INTERNALS__.invoke("plugin:window|close",{label:"main"})')
@@ -162,7 +163,8 @@ def main() -> None:
             page.get_by_role('button', name='پایان ویرایش', exact=True).click()
             page.get_by_role('button', name='DOCX (Word)', exact=True).click()
             page.get_by_role('button', name='شروع تبدیل اسناد', exact=True).click()
-            page.get_by_text('فرآیند تبدیل پایان یافت: 3 موفق، 0 ناموفق.', exact=True).wait_for(timeout=90000)
+            page.get_by_text('فرآیند تبدیل پایان یافت:', exact=False).wait_for(timeout=90000)
+            assert page.get_by_text('فرآیند تبدیل پایان یافت: 3 موفق، 0 ناموفق.', exact=True).is_visible()
             for file in (first, second, third):
                 with zipfile.ZipFile(file.with_suffix('.docx')) as archive:
                     assert 'word/document.xml' in archive.namelist()
@@ -190,6 +192,11 @@ def main() -> None:
             watch.uncheck()
             report['nativeWatchRebuildAndCancellation'] = True
             page.get_by_role('tab', name='پیش‌نمایش سند', exact=True).click()
+            page.get_by_role('button', name='تنظیمات برنامه', exact=True).click()
+            settings = page.get_by_role('dialog', name='تنظیمات برنامه', exact=True)
+            settings.get_by_label('روشن', exact=True).check()
+            settings.get_by_role('button', name='تمام', exact=True).click()
+            assert not page.locator('html').evaluate('el=>el.classList.contains("dark")')
             page.screenshot(path=str(output / 'native-workspace.png'))
             report['ownedProcessesWhileReading'] = owned_processes(exe.parent)
             assert sum(row['Name'].lower() == 'mdpersia.exe' for row in report['ownedProcessesWhileReading']) == 1
@@ -205,8 +212,43 @@ def main() -> None:
                 time.sleep(.1)
             assert not owned_processes(exe.parent), 'Application children remained after exit'
             report['engineAndConversionTreesStopOnExit'] = True
+            # A normal launch reuses the installed profile, unlike the fresh-profile
+            # first-launch timing above. Both measurements include CDP attachment.
+            started = time.perf_counter()
+            proc = subprocess.Popen([str(exe), str(third)], cwd=output, env=env)
+            deadline = time.monotonic() + 30
+            while True:
+                if time.monotonic() > deadline:
+                    raise TimeoutError('Subsequent native launch did not expose its WebView2 page')
+                try:
+                    again = p.chromium.connect_over_cdp(f'http://127.0.0.1:{port}', timeout=1000)
+                    if again.contexts and again.contexts[0].pages:
+                        page = again.contexts[0].pages[0]
+                        break
+                except Exception:
+                    if time.monotonic() > deadline:
+                        raise
+                time.sleep(.1)
+            page.frame_locator('iframe').get_by_role('heading', name='سند سوم', exact=True).wait_for(timeout=20000)
+            report['subsequentLaunchToRenderedHeadingSeconds'] = round(time.perf_counter()-started, 3)
+            assert not page.locator('html').evaluate('el=>el.classList.contains("dark")')
+            expect(page.locator('tbody tr')).to_have_count(1)
+            report['preferencesPersistAndPreviousQueueDoesNotBecomeGhostFiles'] = True
+            page.get_by_role('button', name='PDF', exact=True).click()
+            page.get_by_role('button', name='شروع تبدیل اسناد', exact=True).click()
+            page.get_by_text('فرآیند تبدیل پایان یافت: 1 موفق، 0 ناموفق.', exact=True).wait_for(timeout=60000)
+            assert third.with_suffix('.pdf').read_bytes().startswith(b'%PDF-')
+            report['realNativePdfConversion'] = True
+            page.evaluate('void window.__TAURI_INTERNALS__.invoke("plugin:window|close",{label:"main"})')
+            proc.wait(timeout=15)
+            assert not owned_processes(exe.parent)
     except Exception:
         report['pageErrors'] = errors
+        try:
+            (output / 'console-diagnostic.txt').write_text(page.locator('.console-report').text_content() or '', encoding='utf-8')
+            page.screenshot(path=str(output / 'failure.png'))
+        except Exception:
+            pass
         raise
     finally:
         if proc.poll() is None:

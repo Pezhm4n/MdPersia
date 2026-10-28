@@ -19,6 +19,15 @@ def asset_root(value: str | None = None) -> Path:
         root = Path(sys.executable).resolve().parent.parent / 'assets'
     else:
         root = Path(__file__).resolve().parents[2]
+    # Tauri resource_dir can use Windows verbatim paths. pathlib.as_uri turns
+    # those into file://%3F/... URLs, which browsers cannot load. Keep the
+    # installed filesystem path in its ordinary drive/UNC form for renderers.
+    raw = str(root)
+    if raw.startswith('\\\\?\\UNC\\'):
+        root = Path('\\\\' + raw[8:])
+    elif raw.startswith('\\\\?\\'):
+        root = Path(raw[4:])
+    root = root.resolve()
     if not (root / 'fonts' / 'Vazirmatn-Regular.ttf').is_file():
         raise RuntimeError('فونت‌های داخلی برنامه پیدا نشدند؛ نصب برنامه را تعمیر کنید.')
     if not (root / 'vendor' / 'mermaid.min.js').is_file():
