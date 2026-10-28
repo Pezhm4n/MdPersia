@@ -36,6 +36,12 @@ def run(*args: str, env=None) -> None:
 def main() -> None:
     if sys.platform != 'win32' or sys.maxsize <= 2**32:
         raise SystemExit('Build on Windows x64 with Python 3.11 x64.')
+    browser_cache = OUTPUT / 'browser-cache'
+    previous_browsers = STAGING / 'browsers'
+    if previous_browsers.is_dir() and not browser_cache.exists():
+        assert OUTPUT.resolve() in previous_browsers.resolve().parents
+        assert OUTPUT.resolve() in browser_cache.resolve().parents
+        shutil.move(str(previous_browsers), str(browser_cache))
     reset_generated(STAGING)
     run(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean',
         '--distpath', str(STAGING), '--workpath', str(OUTPUT / 'pyinstaller'),
@@ -59,7 +65,8 @@ def main() -> None:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(dist.locate_file(file), target)
     run(sys.executable, '-m', 'playwright', 'install', '--only-shell', 'chromium',
-        env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': str(STAGING / 'browsers')})
+        env={**os.environ, 'PLAYWRIGHT_BROWSERS_PATH': str(browser_cache)})
+    shutil.copytree(browser_cache, STAGING / 'browsers', ignore=shutil.ignore_patterns('.links'))
     # The driver Node binary is private to Playwright; no global Node is used.
     notices = ['MdPersia: MIT (assets/LICENSE).',
         'Vazirmatn: SIL Open Font License (assets/fonts/OFL.txt).',

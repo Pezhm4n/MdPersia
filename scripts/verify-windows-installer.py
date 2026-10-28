@@ -110,7 +110,7 @@ def main():
         icon = read_value(TREES[0]+r'\DefaultIcon', '')['value']
         assert 'MdPersia.exe' in icon and 'python' not in icon.lower()
         report['nativeAssociationAndApplicationIcon'] = True
-        subprocess.run([sys.executable, str(root / 'scripts/verify-frozen-engine.py'), str(install),
+        subprocess.run([sys.executable, str(root / 'scripts/verify-reader-engine.py'), str(install),
                         '--output', str(output / 'frozen')], check=True)
         if not args.skip_native_ui:
             subprocess.run([sys.executable, str(root / 'scripts/verify-native-app.py'), str(install / 'MdPersia.exe'),
