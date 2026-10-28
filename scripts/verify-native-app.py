@@ -11,10 +11,12 @@ import os
 from pathlib import Path
 import platform
 import socket
+import struct
 import subprocess
 import time
 from urllib.request import urlopen
 import zipfile
+import zlib
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -47,12 +49,16 @@ def main() -> None:
         'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS': f'--remote-debugging-port={port} --remote-debugging-address=127.0.0.1 --no-first-run'}
     for key in ('PYTHONHOME', 'PYTHONPATH', 'PLAYWRIGHT_BROWSERS_PATH'):
         env.pop(key, None)
-    original = '# سند نخست\r\n\r\n- Host: localhost برای اتصال\r\n\r\nEnglish Solver: example.\r\n\r\n![local](local-image.svg)\r\n\r\n```mermaid\r\ngraph LR\r\nA[شروع]-->B[پایان]\r\n```\r\n'
+    original = '# سند نخست\r\n\r\n- Host: localhost برای اتصال\r\n\r\nEnglish Solver: example.\r\n\r\n![local](local-image.png)\r\n\r\n```mermaid\r\ngraph LR\r\nA[شروع]-->B[پایان]\r\n```\r\n'
     first, second, third = [output / name for name in ('فایل نخست.md', 'second.markdown', 'third.md')]
     first.write_bytes(original.encode('utf-8-sig'))
     second.write_text('# سند دوم\n\nمتن دوم.', encoding='utf-8')
     third.write_text('# سند سوم\n\nمتن سوم.', encoding='utf-8')
-    (output / 'local-image.svg').write_text('<svg xmlns="http://www.w3.org/2000/svg" width="80" height="30"><rect width="80" height="30" fill="steelblue"/></svg>')
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind+data))
+    image = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 80, 30, 8, 2, 0, 0, 0))
+    image += chunk(b'IDAT', zlib.compress((b'\0'+b'\x46\x82\xb4'*80)*30)) + chunk(b'IEND', b'')
+    (output / 'local-image.png').write_bytes(image)
     started = time.perf_counter()
     proc = subprocess.Popen([str(exe), str(first)], cwd=output, env=env)
     report = {'os': platform.platform(), 'executable': str(exe), 'restrictedPath': env['PATH']}

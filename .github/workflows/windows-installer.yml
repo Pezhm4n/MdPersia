@@ -59,6 +59,11 @@ jobs:
       - name: Build offline installer
         working-directory: desktop-tauri
         run: npm run tauri bundle -- --bundles nsis
+      - name: Verify installed resources and actual registry commands
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem desktop-tauri/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1).FullName
+          python scripts/verify-windows-installer.py $setup --output output/release/installer-acceptance --skip-native-ui
       - name: Save binaries and build evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,6 +73,7 @@ jobs:
             desktop-tauri/src-tauri/target/release/bundle/nsis/*-setup.exe
             desktop-tauri/src-tauri/Cargo.lock
             output/release/acceptance/frozen-engine-report.json
+            output/release/installer-acceptance/installer-report.json
           if-no-files-found: warn
           retention-days: 14
           compression-level: 0

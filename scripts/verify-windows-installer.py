@@ -80,6 +80,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('setup', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--skip-native-ui', action='store_true', help='CI packaging check; does not claim UI acceptance')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
@@ -109,8 +110,9 @@ def main():
         report['nativeAssociationAndApplicationIcon'] = True
         subprocess.run([sys.executable, str(root / 'scripts/verify-frozen-engine.py'), str(install),
                         '--output', str(output / 'frozen')], check=True)
-        subprocess.run([sys.executable, str(root / 'scripts/verify-native-app.py'), str(install / 'MdPersia.exe'),
-                        '--output', str(output / 'native')], check=True)
+        if not args.skip_native_ui:
+            subprocess.run([sys.executable, str(root / 'scripts/verify-native-app.py'), str(install / 'MdPersia.exe'),
+                            '--output', str(output / 'native')], check=True)
     finally:
         try:
             uninstaller = install / 'uninstall.exe'
