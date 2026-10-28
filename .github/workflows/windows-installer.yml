@@ -47,9 +47,6 @@ jobs:
       - name: Frontend tests
         working-directory: desktop-tauri
         run: npm test
-      - name: Resolve optional runtime dependencies
-        working-directory: desktop-tauri/src-tauri
-        run: cargo generate-lockfile
       - name: Build native app
         working-directory: desktop-tauri
         run: npm run tauri build -- --no-bundle -- --locked
