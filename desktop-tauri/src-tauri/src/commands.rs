@@ -5,7 +5,7 @@ use tauri::{ipc::Channel, AppHandle, Manager, State};
 use crate::engine::{Engine, Job, Jobs, Layout, ProcessTree};
 
 #[derive(Default)]
-pub struct Runtime { pub engine: Engine, pub jobs: Jobs, pub pending: Mutex<Vec<String>> }
+pub struct Runtime { pub engine: Engine, pub jobs: Jobs, pub pending: Mutex<Vec<String>>, pub packages: crate::conversion_runtime::PackageManager }
 pub type SharedRuntime = Arc<Runtime>;
 
 pub fn is_markdown(path: &Path) -> bool {
@@ -109,7 +109,7 @@ pub async fn run_conversion(app: AppHandle, runtime: State<'_, SharedRuntime>, i
     }
     tauri::async_runtime::spawn_blocking(move || {
         let result = (|| {
-            let layout = Layout::resolve(&app)?;
+            let layout = if args.iter().any(|a| a == "--wrap-rtl") { Layout::resolve(&app)? } else { Layout::conversion(&app)? };
             let mut child = layout.command("--convert").args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
             let tree = ProcessTree::attach(&mut child)?;
             let stdout = child.stdout.take().ok_or("Engine stdout unavailable")?;

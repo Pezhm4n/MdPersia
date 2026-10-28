@@ -335,7 +335,7 @@ def resolve_browsers_setting(args: argparse.Namespace, project_root: Path) -> Pa
 def _run_wrap_rtl(args: argparse.Namespace) -> int:
     """Transform Markdown files by wrapping Persian text in <div dir='rtl'>."""
     from .html_builder import read_text_safely
-    from .converter import normalize_extensions
+    from .input_files import normalize_extensions
     from .rtl_wrapper import WrapOptions, wrap_rtl_in_markdown
 
     input_path = args.input.resolve()
@@ -354,7 +354,7 @@ def _run_wrap_rtl(args: argparse.Namespace) -> int:
         sources = [input_path]
         input_root = None
     elif input_path.is_dir():
-        from .converter import discover_markdown_files
+        from .input_files import discover_markdown_files
         sources = discover_markdown_files(input_path, recursive=args.recursive, extensions=extensions)
         input_root = input_path
     else:
@@ -450,7 +450,7 @@ def _resolve_wrap_rtl_output(
     source: Path, output: Path | None, input_root: Path | None, suffix: str
 ) -> Path:
     """Compute output path for wrap-rtl transform with clean suffix handling."""
-    from .converter import output_for_file
+    from .input_files import output_for_file
 
     clean_suffix = _normalize_rtl_suffix(suffix, source.suffix)
     target_name = (

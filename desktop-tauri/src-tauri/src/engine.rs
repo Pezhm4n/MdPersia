@@ -51,7 +51,7 @@ pub struct Layout { pub executable: PathBuf, pub prefix: Vec<String>, pub assets
 impl Layout {
     pub fn resolve(app: &AppHandle) -> Result<Self, String> {
         let resources = app.path().resource_dir().map_err(|e| e.to_string())?;
-        let executable = resources.join("engine").join(if cfg!(windows) { "mdpersia-engine.exe" } else { "mdpersia-engine" });
+        let executable = resources.join("reader").join(if cfg!(windows) { "mdpersia-reader.exe" } else { "mdpersia-reader" });
         if executable.is_file() {
             return Ok(Self { executable, prefix: vec![], assets: resources.join("assets"), bundled: true });
         }
@@ -63,6 +63,16 @@ impl Layout {
         }
         #[cfg(not(debug_assertions))]
         Err("موتور داخلی MdPersia پیدا نشد؛ برنامه را دوباره نصب کنید.".into())
+    }
+
+    pub fn conversion(app: &AppHandle) -> Result<Self, String> {
+        #[cfg(debug_assertions)]
+        if !app.path().resource_dir().map_err(|e| e.to_string())?.join("reader/mdpersia-reader.exe").is_file() {
+            return Self::resolve(app);
+        }
+        let root = crate::conversion_runtime::installed_dir(app)?;
+        Ok(Self { executable: root.join("engine/mdpersia-engine.exe"), prefix: vec![],
+            assets: root.join("assets"), bundled: true })
     }
 
     pub fn command(&self, mode: &str) -> Command {

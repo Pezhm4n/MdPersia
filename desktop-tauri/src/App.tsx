@@ -20,6 +20,8 @@ import { DEFAULT_APP_SETTINGS, readPreferences, savePreferences, type AppSetting
 import { draftIsDirty, useDocumentEditor } from './services/useDocumentEditor';
 import type { DocumentSnapshot } from './services/documents';
 import { AppDialog } from './components/AppDialog';
+import { ConversionRuntimePanel, runtimePhase } from './components/ConversionRuntimePanel';
+import { useConversionRuntime } from './services/useConversionRuntime';
 import { Header } from './components/Header';
 import { StatusBar } from './components/StatusBar';
 import { QueuePanel } from './components/QueuePanel';
@@ -60,6 +62,8 @@ const storeWidth = (key: string, value: number): void => {
 };
 
 export const App: React.FC = () => {
+  const conversionRuntime = useConversionRuntime();
+  const [runtimeDialogOpen, setRuntimeDialogOpen] = useState(false);
   const [initialPreferences] = useState(readPreferences);
   const [settings, setSettings] = useState(initialPreferences.settings);
   const settingsRef = useRef(settings);
@@ -585,6 +589,11 @@ export const App: React.FC = () => {
     if (items.some(item => draftIsDirty(editor.ref.current[documentKey(item.path)]))) {
       guardEdits(items.map(item => item.path), () => { void handleConvert(); }, false); return;
     }
+    if (conversionRuntime.native && options.format !== 'wrap-rtl') {
+      try {
+        if (!(await conversionRuntime.refresh()).installed) { setRuntimeDialogOpen(true); return; }
+      } catch (error) { appendLog('error', String(error)); setRuntimeDialogOpen(true); return; }
+    }
     setIsRunning(true);
     setIsWatching(false);
     setProgressPercent(0);
@@ -709,7 +718,13 @@ export const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-app text-main transition-colors duration-200">
-      <Header theme={theme} onToggleTheme={handleToggleTheme} onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} isBusy={!!nativeBusy || (isRunning && !isWatching)} />
+      <Header theme={theme} onToggleTheme={handleToggleTheme} onOpenSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} isBusy={!!nativeBusy || (isRunning && !isWatching) || conversionRuntime.busy} />
+      {runtimeDialogOpen && <AppDialog title="آماده‌سازی خروجی PDF و Word" description="دریافت موتور تبدیل اختیاری است و فقط با انتخاب شما شروع می‌شود."
+        onClose={() => setRuntimeDialogOpen(false)} footer={<>
+          <button type="button" className="btn px-3 py-2 rounded-md border border-subtle hover:bg-subtle text-sm" onClick={() => setRuntimeDialogOpen(false)}>ادامهٔ مطالعه</button>
+          {conversionRuntime.info.installed && <button type="button" className="btn px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm"
+            onClick={() => { setRuntimeDialogOpen(false); void handleConvert(); }}>شروع تبدیل</button>}
+        </>}><ConversionRuntimePanel runtime={conversionRuntime} isRunning={isRunning} /></AppDialog>}
 
       {pendingEdits && <AppDialog title="تغییرات ذخیره‌نشده" description={pendingEdits.allowDiscard ? 'پیش از کنارگذاشتن اسناد، تغییرات را ذخیره کنید.' : 'برای تبدیل، ابتدا تغییرات اسناد باید روی دیسک ذخیره شوند.'}
         onClose={() => { if (!savingEdits) setPendingEdits(null); }}
@@ -729,7 +744,7 @@ export const App: React.FC = () => {
       </AppDialog>}
 
       {settingsOpen && <Suspense fallback={null}>
-        <SettingsDialog settings={settings} format={options.format} isRunning={isRunning} storageError={storageError} notice={settingsNotice}
+        <SettingsDialog settings={settings} format={options.format} isRunning={isRunning} storageError={storageError} notice={settingsNotice} conversionRuntime={conversionRuntime}
           onChange={changeSettings} onFormatChange={format => { handleOptionChange('format', format); setSettingsNotice(''); }} onClose={() => setSettingsOpen(false)}
           onResetLayout={() => {
             setQueueWidth(queueDefault()); setInspectorWidth(inspectorDefault());
@@ -850,12 +865,14 @@ export const App: React.FC = () => {
       </main>
 
       <StatusBar
-        statusMessage={statusMessage}
+        statusMessage={conversionRuntime.busy && !isRunning ? `${runtimePhase(conversionRuntime.info.phase)}${['downloading', 'copying'].includes(conversionRuntime.info.phase) && conversionRuntime.info.totalBytes ? `: ${Math.floor(conversionRuntime.info.downloadedBytes * 100 / conversionRuntime.info.totalBytes)}%` : ''}` : statusMessage}
         progressPercent={progressPercent}
         isRunning={isRunning}
         isWatching={isWatching}
         totalItems={items.length}
         completedItems={completedCount}
+        conversionReady={conversionRuntime.native ? conversionRuntime.info.installed : undefined}
+        onManageConversion={() => setRuntimeDialogOpen(true)}
       />
     </div>
   );

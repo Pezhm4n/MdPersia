@@ -7,6 +7,8 @@ interface StatusBarProps {
   isWatching: boolean;
   totalItems: number;
   completedItems: number;
+  conversionReady?: boolean;
+  onManageConversion?: () => void;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -16,6 +18,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   isWatching,
   totalItems,
   completedItems,
+  conversionReady, onManageConversion,
 }) => {
   return (
     <footer className="h-8 bg-surface border-t border-main flex items-center justify-between px-3 text-[11px] select-none shrink-0 text-muted transition-colors duration-200">
@@ -48,10 +51,11 @@ export const StatusBar: React.FC<StatusBarProps> = ({
 
       {/* Right / Offline Readiness Badges */}
       <div className="hidden md:flex items-center gap-4 text-muted">
-        <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          <span>مرورگر کرومیوم آماده</span>
-        </div>
+        {conversionReady !== undefined && <button type="button" onClick={onManageConversion}
+          className="btn flex items-center gap-1.5 rounded hover:text-main" aria-label="مدیریت موتور تبدیل">
+          <span className={`w-1.5 h-1.5 rounded-full ${conversionReady ? 'bg-emerald-500' : 'bg-subtle'}`} />
+          <span>{conversionReady ? 'موتور تبدیل آماده' : 'موتور تبدیل اختیاری'}</span>
+        </button>}
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
           <span>فونت وزیرمتن فعال</span>

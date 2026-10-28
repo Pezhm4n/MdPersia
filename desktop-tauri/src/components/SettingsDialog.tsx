@@ -3,6 +3,8 @@ import { BookOpen, Check, Monitor, Moon, RotateCcw, SlidersHorizontal, Sun } fro
 import type { AppSettings } from '../services/appSettings';
 import type { OutputFormat } from '../types';
 import { AppDialog } from './AppDialog';
+import { ConversionRuntimePanel } from './ConversionRuntimePanel';
+import type { ConversionRuntime } from '../services/useConversionRuntime';
 
 function Toggle({ title, description, checked, onChange, disabled = false }: {
   title: string; description: string; checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean;
@@ -21,10 +23,11 @@ function Section({ title, icon, children }: { title: string; icon: ReactNode; ch
   </section>;
 }
 
-export default function SettingsDialog({ settings, format, isRunning, storageError, notice, onChange, onFormatChange, onReset, onResetLayout, onClose }: {
+export default function SettingsDialog({ settings, format, isRunning, storageError, notice, onChange, onFormatChange, onReset, onResetLayout, onClose, conversionRuntime }: {
   settings: AppSettings; format: OutputFormat; isRunning: boolean; storageError: boolean; notice: string;
   onChange: (patch: Partial<AppSettings>) => void; onFormatChange: (format: OutputFormat) => void;
   onReset: () => void; onResetLayout: () => void; onClose: () => void;
+  conversionRuntime?: ConversionRuntime;
 }) {
   const radioGroup = useId();
   return <AppDialog title="تنظیمات برنامه" description="انتخاب‌ها بلافاصله اعمال می‌شوند و فقط روی همین دستگاه ذخیره می‌شوند." onClose={onClose}
@@ -84,6 +87,7 @@ export default function SettingsDialog({ settings, format, isRunning, storageErr
       </fieldset>
       {isRunning && <p className="text-xs text-muted mt-3">تنظیمات تبدیل پس از پایان عملیات قابل تغییر است.</p>}
     </Section>
+    {conversionRuntime?.native && <ConversionRuntimePanel runtime={conversionRuntime} isRunning={isRunning} />}
     <section className="settings-section">
       <h3 className="text-sm font-bold mb-3">میان‌برهای کاربردی</h3>
       <dl className="grid gap-2 text-xs text-muted">

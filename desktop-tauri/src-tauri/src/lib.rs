@@ -2,6 +2,7 @@
 
 mod engine;
 mod commands;
+mod conversion_runtime;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use commands::{Runtime, SharedRuntime, queue_files};
@@ -28,11 +29,14 @@ pub fn run() {
         commands::startup_arguments, commands::preview_html, commands::document_io,
         commands::stat_files, commands::scan_folder, commands::run_conversion,
         commands::cancel_conversion, commands::reveal_path, commands::open_external,
+        conversion_runtime::conversion_runtime_status, conversion_runtime::conversion_runtime_install,
+        conversion_runtime::conversion_runtime_cancel, conversion_runtime::conversion_runtime_remove,
     ]).build(tauri::generate_context!()).expect("MdPersia could not start");
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let runtime = app.state::<SharedRuntime>();
             runtime.jobs.shutdown(); runtime.engine.shutdown();
+            runtime.packages.shutdown();
         }
     });
 }
