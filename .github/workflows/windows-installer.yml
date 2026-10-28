@@ -2,15 +2,82 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_only:
+        description: Publish the verified beta artifact without rebuilding it
+        type: boolean
+        default: false
   push:
     branches: [feat/windows-installer]
     paths-ignore: ['docs/**', 'README*', 'scripts/verify-*.py']
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: MdPersia-Windows-x64
+          run-id: 40664741031
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: output/publish
+      - name: Verify the exact accepted Setup
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          files = list(Path('output/publish').rglob('*-setup.exe'))
+          assert len(files) == 1
+          setup = files[0]
+          digest = hashlib.sha256(setup.read_bytes()).hexdigest()
+          assert digest == 'd07b235ad93c3a97990a34c52bddc6453690c82592626c2118f9ad50278891f9'
+          assert setup.stat().st_size == 15832533
+          Path('output/publish/SHA256SUMS.txt').write_text(f'{digest}  {setup.name}\n')
+          print(f'Accepted artifact: {setup.name}, {setup.stat().st_size} bytes, SHA-256 {digest}')
+          PY
+      - name: Upload accepted assets and publish the prepared beta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, urllib.request, urllib.parse
+          from pathlib import Path
+          base = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY']
+          def request(url, data=None, method='GET', mime='application/json'):
+              assert urllib.parse.urlparse(url).hostname in ('api.github.com', 'uploads.github.com')
+              if isinstance(data, dict): data = json.dumps(data).encode()
+              req = urllib.request.Request(url, data=data, method=method, headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'User-Agent': 'MdPersia-release', 'Content-Type': mime})
+              with urllib.request.urlopen(req, timeout=180) as response: return json.load(response)
+          release = request(base + '/releases/tags/desktop-v0.3.0-beta.2')
+          assert release['target_commitish'] == 'b919fa9f0c9e6b098c6144e4f7241423600213dc'
+          files = [next(Path('output/publish').rglob('*-setup.exe')),
+                   Path('output/publish/SHA256SUMS.txt'), Path('docs/WINDOWS-ACCEPTANCE.md')]
+          for path in files:
+              name = 'TEST-REPORT.md' if path.suffix == '.md' else path.name
+              payload = path.read_bytes()
+              old = next((a for a in release['assets'] if a['name'] == name), None)
+              if old:
+                  assert old['state'] == 'uploaded' and old['digest'] == 'sha256:' + hashlib.sha256(payload).hexdigest()
+                  continue
+              result = request(release['upload_url'].split('{')[0] + '?name=' + urllib.parse.quote(name),
+                               payload, 'POST', 'application/octet-stream')
+              assert result['size'] == len(payload)
+              print('Uploaded', name, result['size'])
+          result = request(base + '/releases/' + str(release['id']),
+                           {'draft': False, 'prerelease': True, 'make_latest': 'false'}, 'PATCH')
+          print('Published', result['html_url'])
+          PY
   build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.publish_only
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
