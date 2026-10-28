@@ -64,6 +64,22 @@ def test_build_entries_exposes_open_with_and_context_verb():
     assert by_key[(rf"{verb}\command", "")].endswith('"%1"')
 
 
+def test_markdown_icon_is_bundled_and_independent_of_python():
+    from pathlib import Path
+
+    entries = associations.build_entries(r"C:\Python311\pythonw.exe")
+    icon = next(e.value for e in entries if e.key.endswith("\\DefaultIcon"))
+    assert icon.endswith('mdpersia.ico",0')
+    assert "python" not in icon.lower()
+    assert Path(icon.rsplit(",", 1)[0].strip('"')).is_file()
+
+
+def test_custom_icon_paths_with_spaces_are_quoted():
+    entries = associations.build_entries(r"C:\app\MdPersia.exe", r"C:\My icons\md.ico")
+    icon = next(e.value for e in entries if e.key.endswith("\\DefaultIcon"))
+    assert icon == '"C:\\My icons\\md.ico",0'
+
+
 def test_uninstall_keys_cover_exactly_what_register_creates():
     trees = associations.build_uninstall_keys()
     assert associations.PROGID_KEY in trees

@@ -52,13 +52,16 @@ def open_command(exe: str, extra_args: str | None = None) -> str:
 
 def build_entries(exe_path: str | Path, icon_path: str | Path | None = None) -> list[RegEntry]:
     exe = str(Path(exe_path))
-    icon = str(Path(icon_path)) if icon_path else exe
+    # Use the application's Markdown mark even when Python launches the GUI.
+    bundled_icon = Path(__file__).parent / "assets" / "mdpersia.ico"
+    icon = str(Path(icon_path)) if icon_path else str(bundled_icon)
+    icon_value = f'"{icon}",0'
     command = open_command(exe)
 
     entries = [
         RegEntry(PROGID_KEY, "", APP_NAME),
         RegEntry(PROGID_KEY, "FriendlyTypeName", APP_NAME),
-        RegEntry(rf"{PROGID_KEY}\DefaultIcon", "", f"{icon},0"),
+        RegEntry(rf"{PROGID_KEY}\DefaultIcon", "", icon_value),
         RegEntry(rf"{PROGID_KEY}\shell\open\command", "", command),
         RegEntry(rf"{PROGID_KEY}\Application", "AppUserModelID", "MdPersia.Viewer"),
     ]
@@ -77,7 +80,7 @@ def build_entries(exe_path: str | Path, icon_path: str | Path | None = None) -> 
     for ext in EXTENSIONS:
         verb = rf"Software\Classes\SystemFileAssociations\{ext}\shell\MdPersia.view"
         entries.append(RegEntry(verb, "", VERB_LABEL))
-        entries.append(RegEntry(verb, "Icon", f"{icon},0"))
+        entries.append(RegEntry(verb, "Icon", icon_value))
         entries.append(RegEntry(rf"{verb}\command", "", command))
 
     return entries
