@@ -51,6 +51,7 @@ class HtmlBuildOptions:
     margin: str = "15mm"
     landscape: bool = False
     strip_emojis: bool = False
+    preview_nonce: str | None = None
 
 
 EMOJI_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -479,6 +480,11 @@ def build_html(markdown_text: str, options: HtmlBuildOptions) -> HtmlDocument:
     css = build_css(options)
     base_uri = directory_uri(options.source_path.parent)
     mermaid_script = build_mermaid_script(options, has_mermaid)
+    preview_policy = ""
+    if options.preview_nonce:
+        nonce = html.escape(options.preview_nonce, quote=True)
+        mermaid_script = mermaid_script.replace("<script", f'<script nonce="{nonce}"')
+        preview_policy = f'''<meta http-equiv="Content-Security-Policy" content="script-src 'nonce-{nonce}'; object-src 'none'; frame-src 'none'; form-action 'none'">'''
 
     doc_dir = detect_direction(markdown_text)
     doc_lang = "fa" if doc_dir == "rtl" else "en"
@@ -487,6 +493,7 @@ def build_html(markdown_text: str, options: HtmlBuildOptions) -> HtmlDocument:
 <html lang="{doc_lang}" dir="{doc_dir}">
 <head>
   <meta charset="utf-8">
+  {preview_policy}
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base href="{html.escape(base_uri, quote=True)}">
   <title>{html.escape(title)}</title>
